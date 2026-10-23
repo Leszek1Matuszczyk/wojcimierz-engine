@@ -49,6 +49,10 @@ public:
 
 private:
     friend class PhysicsWorld;
+    // Odrzuca NaN/inf z gameplayu (issue #16). Ostrzezenie raz na cialo.
+    bool Reject(const char* what, const glm::vec3& v);
+    bool Reject(const char* what, const glm::quat& q);
+    bool warnedNonFinite_ = false;
     // Wartosci zadane przed powstaniem ciala - aplikowane przy jego tworzeniu.
     glm::vec3 pendingVelocity_{0.0f};
     glm::vec3 pendingAngularVelocity_{0.0f};
