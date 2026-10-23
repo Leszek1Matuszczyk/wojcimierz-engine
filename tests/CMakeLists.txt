@@ -8,6 +8,9 @@ add_executable(wz_unit_tests
   test_game_loop.cpp
   test_input.cpp
   test_mesh_data.cpp
+  test_fixed_step_system.cpp
+  test_image_srgb.cpp
+  test_math.cpp
   test_lighting.cpp
   test_material.cpp
   test_gltf_import.cpp

@@ -1,3 +1,7 @@
+// =============================================================================
+// Wojcimierz Engine - engine/platform/Window.cpp
+// Na chwałę czcigodnego Wojcimierza.
+// =============================================================================
 #include "platform/Window.h"
 
 #include <GLFW/glfw3.h>
@@ -25,6 +29,7 @@ Window::Window(const WindowDesc& desc) {
     glfwWindowHint(GLFW_VISIBLE, desc.visible ? GLFW_TRUE : GLFW_FALSE);
     glfwWindowHint(GLFW_RESIZABLE, desc.resizable ? GLFW_TRUE : GLFW_FALSE);
     glfwWindowHint(GLFW_DEPTH_BITS, 24);
+    glfwWindowHint(GLFW_SRGB_CAPABLE, GLFW_TRUE); // prosba o back buffer sRGB (sprawdzane w GLDevice)
 
     window_ = glfwCreateWindow(desc.width, desc.height, desc.title.c_str(), nullptr, nullptr);
     if (!window_) {

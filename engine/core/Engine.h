@@ -1,5 +1,10 @@
+// =============================================================================
+// Wojcimierz Engine - engine/core/Engine.h
+// Na chwałę czcigodnego Wojcimierza.
+// =============================================================================
 #pragma once
 #include "core/Clock.h"
+#include "core/FixedStepSystem.h"
 #include "core/GameLoop.h"
 #include "platform/Window.h"
 #include "render/RHI.h"
@@ -16,12 +21,14 @@ class IInputSource;
 struct EngineConfig {
     WindowDesc window;
     bool headless = false;          // niewidoczne okno + render do offscreen, staly krok czasu
+    bool forceSrgbBlit = false;     // okno: zawsze render do celu sRGB + blit (test sciezki dla okien bez sRGB)
     int maxFrames = 0;              // 0 = bez limitu (tryb okienkowy)
     std::string screenshotPath;     // zrzut ostatniej klatki do PNG (pusty = brak)
-    float fixedDeltaTime = 1.0f / 60.0f;
-    float headlessFrameTime = 1.0f / 60.0f; // czas klatki w trybie headless (deterministyczny)
+    double fixedDeltaTime = 1.0 / 60.0;
+    double maximumDeltaTime = 0.25;
+    double headlessFrameTime = 1.0 / 60.0; // czas klatki w trybie headless (deterministyczny)
 
-    // Parsuje: --headless --frames N --screenshot plik.png --width W --height H
+    // Parsuje: --headless --frames N --screenshot plik.png --width W --height H --force-srgb-blit
     // Zwraca false przy blednych argumentach (komunikat w 'error').
     static bool ParseArgs(int argc, char** argv, EngineConfig& inOut, std::string& error);
 };
@@ -48,6 +55,17 @@ public:
     // Wstrzykniecie zrodla wejscia (np. FakeInput). Domyslnie GLFW.
     void SetInputSource(IInputSource* source);
 
+    // Systemy kroku stalego (np. PhysicsWorld). W kazdym kroku: PreFixedUpdate systemow ->
+    // FixedUpdate komponentow -> PostFixedUpdate systemow (Unity: skrypty, potem krok fizyki).
+    // Engine nie przejmuje wlasnosci; system musi zyc dluzej niz rejestracja.
+    void AddFixedStepSystem(IFixedStepSystem* system, int order = 0) { fixedSystems_.Add(system, order); }
+    bool RemoveFixedStepSystem(IFixedStepSystem* system) { return fixedSystems_.Remove(system); }
+    FixedStepPipeline& GetFixedStepPipeline() { return fixedSystems_; }
+    // Systemy wolane raz na klatke po LateUpdate komponentow, przed renderem (np. audio).
+    void AddLateUpdateSystem(ILateUpdateSystem* system, int order = 0) { lateSystems_.Add(system, order); }
+    bool RemoveLateUpdateSystem(ILateUpdateSystem* system) { return lateSystems_.Remove(system); }
+    LateUpdatePipeline& GetLateUpdatePipeline() { return lateSystems_; }
+
     // Uruchamia petle gry. Zwraca kod wyjscia procesu (0 = OK).
     int Run();
     // Jedna klatka: zdarzenia okna, Input::Update, krok petli (FixedUpdate*/Update/LateUpdate) i render.
@@ -68,7 +86,13 @@ private:
     IClock* clock_ = nullptr;
     bool usingHeadlessClock_ = false;
     GameLoop loop_;
+    FixedStepPipeline fixedSystems_;
+    LateUpdatePipeline lateSystems_;
+    // Cel offscreen sRGB: zawsze w headless; w oknie tylko gdy back buffer nie jest sRGB.
+    void EnsureWindowTarget();
     rhi::RenderTargetHandle offscreen_;
+    int offscreenW_ = 0, offscreenH_ = 0;
+    bool blitToWindow_ = false;
     bool quit_ = false;
 };
 

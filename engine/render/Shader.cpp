@@ -11,13 +11,6 @@
 
 namespace wz {
 
-namespace {
-// Reczna konwersja liniowe -> sRGB na koncu shadera PBR. Gdy cele renderowania przejda na
-// GL_SRGB8_ALPHA8 + GL_FRAMEBUFFER_SRGB (feat/core-ci), wystarczy ustawic false - shader
-// zwroci kolor LINIOWY (tone mapping Reinhard zostaje).
-constexpr bool kManualSrgbOutput = true;
-} // namespace
-
 Shader::Shader(rhi::Device& device, const std::string& vs, const std::string& fs)
     : device_(&device), handle_(device.CreateShader(vs, fs)) {}
 
@@ -85,8 +78,7 @@ void main() {
                                 std::to_string(shadows::kMaxSpotShadows) + "\n#define WZ_DIR_SHADOW_SLOT " +
                                 std::to_string(shadows::kDirectionalShadowSlot) + "\n#define WZ_SPOT_SHADOW_SLOT0 " +
                                 std::to_string(shadows::kSpotShadowSlot0) + "\n#define WZ_SPOT_SHADOW_SLOT1 " +
-                                std::to_string(shadows::kSpotShadowSlot0 + 1) + "\n#define WZ_MANUAL_SRGB " +
-                                (kManualSrgbOutput ? "1" : "0") + "\n";
+                                std::to_string(shadows::kSpotShadowSlot0 + 1) + "\n";
     static_assert(shadows::kMaxSpotShadows == 2, "shader PBR ma dwa samplery spotow - dopisz kolejne");
     static const char* fs = R"(
 in vec3 v_WorldPos;
@@ -241,10 +233,9 @@ void main() {
     color += u_AmbientColor.rgb * albedo * (1.0 - 0.5 * metallic);
     color += u_Emissive;
 
-    color = color / (color + vec3(1.0));     // Reinhard
-#if WZ_MANUAL_SRGB
-    color = pow(color, vec3(1.0 / 2.2));     // liniowo -> sRGB (cel RGBA8); patrz kManualSrgbOutput
-#endif
+    color = color / (color + vec3(1.0));     // Reinhard (nadal przestrzen liniowa)
+    // Bez recznej gammy: cel jest GL_SRGB8_ALPHA8 z GL_FRAMEBUFFER_SRGB - sprzet koduje do sRGB
+    // dokladnie raz przy zapisie. Wojcimierz liczy swiatlo liniowo, a ekran widzi je raz.
     o_Color = vec4(color, base.a);
 }
 )";

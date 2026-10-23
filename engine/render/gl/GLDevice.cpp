@@ -48,6 +48,12 @@ GLDevice::GLDevice(LoaderFn loader) {
     glEnable(GL_DEPTH_TEST);
     glDepthFunc(GL_LESS);
     glFrontFace(GL_CCW);
+    // Shadery licza w przestrzeni liniowej; zapis do bufora sRGB koduje automatycznie.
+    glEnable(GL_FRAMEBUFFER_SRGB);
+    GLint encoding = GL_LINEAR;
+    glGetNamedFramebufferAttachmentParameteriv(0, GL_BACK_LEFT, GL_FRAMEBUFFER_ATTACHMENT_COLOR_ENCODING, &encoding);
+    defaultSRGB_ = (encoding == GL_SRGB);
+    while (glGetError() != GL_NO_ERROR) {} // brak back buffera (np. kontekst bez okna) nie jest bledem
 }
 
 GLDevice::~GLDevice() {
@@ -56,7 +62,8 @@ GLDevice::~GLDevice() {
 
 void GLDevice::DeleteTarget(const RenderTarget& rt) {
     glDeleteFramebuffers(1, &rt.fbo);
-    if (rt.imguiView) glDeleteTextures(1, &rt.imguiView); // widok przed oryginalem
+    if (rt.rawFbo) glDeleteFramebuffers(1, &rt.rawFbo);
+    if (rt.rawView) glDeleteTextures(1, &rt.rawView); // widok przed oryginalem
     if (rt.color) glDeleteTextures(1, &rt.color);
     if (rt.depthTexture) glDeleteTextures(1, &rt.depthTexture);
     if (rt.depth) glDeleteRenderbuffers(1, &rt.depth);
@@ -156,18 +163,28 @@ void GLDevice::DestroyVertexInput(VertexInputHandle h) {
     if (h) glDeleteVertexArrays(1, &h.id);
 }
 
-RenderTargetHandle GLDevice::CreateRenderTarget(const RenderTargetDesc& desc) {
-    const int width = desc.width, height = desc.height;
+RenderTargetHandle GLDevice::CreateRenderTarget(int width, int height) {
     if (width <= 0 || height <= 0) throw std::runtime_error("Nieprawidlowy rozmiar render targetu");
     RenderTarget rt;
     rt.w = width;
     rt.h = height;
-    rt.srgb = desc.srgb;
     glCreateTextures(GL_TEXTURE_2D, 1, &rt.color);
-    // Niezmienny magazyn (glTextureStorage2D) - wymagany przez glTextureView w GetImGuiTextureId.
-    glTextureStorage2D(rt.color, 1, desc.srgb ? GL_SRGB8_ALPHA8 : GL_RGBA8, width, height);
+    // Jedna sciezka (B2): kazdy cel ma kolor GL_SRGB8_ALPHA8, a GL_FRAMEBUFFER_SRGB jest wlaczone
+    // globalnie - shadery oddaja wartosci liniowe, sprzet koduje do sRGB przy zapisie.
+    glTextureStorage2D(rt.color, 1, GL_SRGB8_ALPHA8, width, height);
     glTextureParameteri(rt.color, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTextureParameteri(rt.color, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    // Widok RGBA8 (UNORM, ta sama klasa formatu) - surowe bajty sRGB: odczyt, blit i ImGui.
+    glGenTextures(1, &rt.rawView); // glTextureView wymaga nazwy z glGenTextures (jeszcze niezwiazanej)
+    glTextureView(rt.rawView, GL_TEXTURE_2D, rt.color, GL_RGBA8, 0, 1, 0, 1);
+    glTextureParameteri(rt.rawView, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTextureParameteri(rt.rawView, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTextureParameteri(rt.rawView, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTextureParameteri(rt.rawView, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glCreateFramebuffers(1, &rt.rawFbo);
+    glNamedFramebufferTexture(rt.rawFbo, GL_COLOR_ATTACHMENT0, rt.rawView, 0);
+    if (glCheckNamedFramebufferStatus(rt.rawFbo, GL_READ_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
+        throw std::runtime_error("Niekompletny framebuffer odczytu (widok RGBA8)");
     glCreateRenderbuffers(1, &rt.depth);
     glNamedRenderbufferStorage(rt.depth, GL_DEPTH24_STENCIL8, width, height);
     glCreateFramebuffers(1, &rt.fbo);
@@ -230,26 +247,28 @@ TextureHandle GLDevice::GetColorTexture(RenderTargetHandle h) const {
 void* GLDevice::GetImGuiTextureId(RenderTargetHandle h) const {
     auto it = targets_.find(h.id);
     if (it == targets_.end()) return nullptr;
-    const RenderTarget& rt = it->second;
-    GLuint tex = rt.color;
-    if (rt.srgb) {
-        // Na chwale Wojcimierza: ten sam magazyn pikseli, inna interpretacja. Widok RGBA8
-        // probkuje surowe bajty sRGB bez dekodowania - ImGui rysuje bez GL_FRAMEBUFFER_SRGB,
-        // wiec bajty trafiaja na ekran 1:1 i viewport ma poprawna jasnosc.
-        if (!rt.imguiView) {
-            // glTextureView wymaga nazwy z glGenTextures, jeszcze nie zwiazanej (nie glCreateTextures).
-            glGenTextures(1, &rt.imguiView);
-            glTextureView(rt.imguiView, GL_TEXTURE_2D, rt.color, GL_RGBA8, 0, 1, 0, 1);
-            glTextureParameteri(rt.imguiView, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-            glTextureParameteri(rt.imguiView, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-            glTextureParameteri(rt.imguiView, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-            glTextureParameteri(rt.imguiView, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-        }
-        tex = rt.imguiView;
-    }
+    // Na chwale Wojcimierza: ten sam magazyn pikseli, inna interpretacja. Widok UNORM RGBA8
+    // probkuje SUROWE bajty sRGB (bez dekodowania), a pass ImGui (BeginUiPass) wylacza
+    // GL_FRAMEBUFFER_SRGB - bajty trafiaja na ekran 1:1, zakodowane dokladnie raz (B3).
     // ImGui (backend OpenGL3) oczekuje nazwy tekstury GL zapisanej w ImTextureID.
-    return reinterpret_cast<void*>(static_cast<std::uintptr_t>(tex));
+    return reinterpret_cast<void*>(static_cast<std::uintptr_t>(it->second.rawView));
 }
+
+void GLDevice::BeginUiPass() {
+    // Zapamietujemy faktyczny stan (glIsEnabled), zeby EndUiPass przywrocil dokladnie to, co bylo.
+    uiPassSrgbStack_.push_back(glIsEnabled(GL_FRAMEBUFFER_SRGB) == GL_TRUE);
+    glDisable(GL_FRAMEBUFFER_SRGB);
+}
+
+void GLDevice::EndUiPass() {
+    if (uiPassSrgbStack_.empty()) return; // EndUiPass bez BeginUiPass - nic do przywrocenia
+    const bool wasEnabled = uiPassSrgbStack_.back();
+    uiPassSrgbStack_.pop_back();
+    if (wasEnabled) glEnable(GL_FRAMEBUFFER_SRGB);
+    else glDisable(GL_FRAMEBUFFER_SRGB);
+}
+
+bool GLDevice::IsFramebufferSrgbEnabled() const { return glIsEnabled(GL_FRAMEBUFFER_SRGB) == GL_TRUE; }
 
 void GLDevice::BeginPass(RenderTargetHandle target, int width, int height, const glm::vec4& c) {
     GLuint fbo = 0;
@@ -308,6 +327,15 @@ void GLDevice::SetUniform(ShaderHandle s, const char* n, const glm::vec3& v) {
 void GLDevice::SetUniform(ShaderHandle s, const char* n, float v) { glProgramUniform1f(s.id, Location(s, n), v); }
 void GLDevice::SetUniform(ShaderHandle s, const char* n, int v) { glProgramUniform1i(s.id, Location(s, n), v); }
 
+void GLDevice::BlitToDefault(RenderTargetHandle source, int sw, int sh, int dw, int dh) {
+    const auto& rt = targets_.at(source.id);
+    // Zrodlo RGBA8 (widok) -> brak dekodowania; FRAMEBUFFER_SRGB wylaczone -> brak kodowania.
+    glDisable(GL_FRAMEBUFFER_SRGB);
+    glBlitNamedFramebuffer(rt.rawFbo, 0, 0, 0, sw, sh, 0, 0, dw, dh, GL_COLOR_BUFFER_BIT,
+                           (sw == dw && sh == dh) ? GL_NEAREST : GL_LINEAR);
+    glEnable(GL_FRAMEBUFFER_SRGB);
+}
+
 void GLDevice::BindUniformBuffer(std::uint32_t binding, BufferHandle h) { glBindBufferBase(GL_UNIFORM_BUFFER, binding, h.id); }
 
 void GLDevice::BindTexture(std::uint32_t slot, TextureHandle h) { glBindTextureUnit(slot, h.id); }
@@ -321,7 +349,8 @@ void GLDevice::DrawIndexedRange(VertexInputHandle vi, std::uint32_t firstIndex, 
 }
 
 std::vector<std::uint8_t> GLDevice::ReadPixels(RenderTargetHandle target, int width, int height) {
-    GLuint fbo = target ? targets_.at(target.id).fbo : 0;
+    // Odczyt przez widok RGBA8: bajty dokladnie takie, jak zapisane (zakodowane sRGB).
+    GLuint fbo = target ? targets_.at(target.id).rawFbo : 0;
     glBindFramebuffer(GL_READ_FRAMEBUFFER, fbo);
     glReadBuffer(target ? GL_COLOR_ATTACHMENT0 : GL_BACK);
     glPixelStorei(GL_PACK_ALIGNMENT, 1);
