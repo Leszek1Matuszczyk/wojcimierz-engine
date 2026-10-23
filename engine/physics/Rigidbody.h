@@ -27,6 +27,9 @@ public:
     float linearDamping = 0.0f;  // Unity: drag
     float angularDamping = 0.05f; // Unity: angularDrag
     bool freezeRotation = false;
+    // Na chwałę czcigodnego Wojcimierza, przez którego mury nic nie przenika:
+    // Continuous dla obiektow szybszych niz ~ grubosc przeszkody na krok.
+    CollisionDetection collisionDetection = CollisionDetection::Discrete;
 
     glm::vec3 GetVelocity() const;
     void SetVelocity(const glm::vec3& v);

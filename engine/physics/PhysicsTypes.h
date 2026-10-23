@@ -22,6 +22,14 @@ enum class BodyType : std::uint8_t {
 };
 
 // Odpowiednik UnityEngine.ForceMode.
+// Wykrywanie kolizji (Unity: Rigidbody.collisionDetectionMode).
+// Continuous = ciagle (Jolt EMotionQuality::LinearCast) - dla szybkich obiektow
+// (pociski), zeby nie przelatywaly przez cienkie sciany (issue #15).
+enum class CollisionDetection : std::uint8_t {
+    Discrete,
+    Continuous,
+};
+
 enum class ForceMode : std::uint8_t {
     Force,          // sila ciagla [N], uwzglednia mase, dziala przez caly krok
     Acceleration,   // przyspieszenie [m/s^2], ignoruje mase

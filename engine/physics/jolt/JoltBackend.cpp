@@ -232,6 +232,7 @@ public:
             // Masa z komponentu, tensor bezwladnosci liczony z ksztaltu.
             s.mOverrideMassProperties = EOverrideMassProperties::CalculateInertia;
             s.mMassPropertiesOverride.mMass = std::max(d.mass, 1e-4f);
+            if (d.continuousCollision) s.mMotionQuality = EMotionQuality::LinearCast;
             if (d.freezeRotation)
                 s.mAllowedDOFs = EAllowedDOFs::TranslationX | EAllowedDOFs::TranslationY | EAllowedDOFs::TranslationZ;
         }
