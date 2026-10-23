@@ -70,7 +70,8 @@ public:
                                                 const VertexLayout& layout) = 0;
     virtual void DestroyVertexInput(VertexInputHandle) = 0;
 
-    // Offscreen render target (kolor RGBA8 + glebia). Uzywany przez tryb headless i render_tests.
+    // Offscreen render target: kolor sRGB (GL_SRGB8_ALPHA8; shadery licza liniowo, zapis koduje do sRGB)
+    // + glebia. Uzywany przez tryb headless, render_tests i jako bufor posredni okna bez sRGB.
     virtual RenderTargetHandle CreateRenderTarget(int width, int height) = 0;
     virtual void DestroyRenderTarget(RenderTargetHandle) = 0;
 
@@ -87,7 +88,12 @@ public:
     virtual void SetUniform(ShaderHandle, const char* name, float) = 0;
     virtual void DrawIndexed(VertexInputHandle, std::uint32_t indexCount) = 0;
 
-    // Odczyt pikseli RGBA8, wiersze od GORY obrazu (gotowe do zapisu PNG).
+    // Czy domyslny back buffer okna koduje sRGB (GL_FRAMEBUFFER_ATTACHMENT_COLOR_ENCODING == GL_SRGB).
+    virtual bool IsDefaultFramebufferSRGB() const = 0;
+    // Kopiuje surowe bajty (juz zakodowane sRGB) z targetu do domyslnego framebuffera okna.
+    virtual void BlitToDefault(RenderTargetHandle source, int srcWidth, int srcHeight, int dstWidth, int dstHeight) = 0;
+
+    // Odczyt pikseli RGBA8 (bajty zakodowane sRGB, bez dekodowania), wiersze od GORY obrazu.
     virtual std::vector<std::uint8_t> ReadPixels(RenderTargetHandle target, int width, int height) = 0;
     virtual void Finish() = 0;
 };

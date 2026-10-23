@@ -49,3 +49,12 @@ Na chwałę czcigodnego Wojcimierza.
 `rhi::Device` udostępnia bufory, shadery (GLSL 450), wejście wierzchołków, render targety offscreen,
 przebiegi (`BeginPass`/`EndPass`), uniformy, `DrawIndexed` i `ReadPixels`. Reszta silnika nie zna OpenGL,
 więc backend Vulkan wymaga tylko nowej implementacji `Device` (shadery GLSL 450 → SPIR-V).
+
+## Kolor (sRGB)
+
+* Obliczenia w shaderach są liniowe; kolory w komponentach (`Camera::clearColor`, `MeshRenderer::color`) są liniowe.
+* Cele offscreen: `GL_SRGB8_ALPHA8`, `GL_FRAMEBUFFER_SRGB` włączone globalnie, więc zapis koduje do sRGB.
+* Odczyt (`ReadPixels`) i blit idą przez widok `GL_RGBA8` tej samej tekstury, czyli surowe bajty sRGB bez konwersji.
+* Okno: `GLFW_SRGB_CAPABLE`; przy starcie `GLDevice` sprawdza `GL_FRAMEBUFFER_ATTACHMENT_COLOR_ENCODING` back buffera.
+  Jeśli to nie `GL_SRGB`, `Engine` renderuje do celu sRGB i robi blit do okna.
+* `Image::SavePNG` dopisuje chunk `sRGB` (intencja perceptual) po IHDR, bo stb_image_write go nie zapisuje.

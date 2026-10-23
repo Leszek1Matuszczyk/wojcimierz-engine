@@ -24,6 +24,7 @@ bool EngineConfig::ParseArgs(int argc, char** argv, EngineConfig& c, std::string
             return argv[++i];
         };
         if (!std::strcmp(a, "--headless")) c.headless = true;
+        else if (!std::strcmp(a, "--force-srgb-blit")) c.forceSrgbBlit = true;
         else if (!std::strcmp(a, "--frames")) { auto v = next(a); if (!v) return false; c.maxFrames = std::atoi(v); }
         else if (!std::strcmp(a, "--screenshot")) { auto v = next(a); if (!v) return false; c.screenshotPath = v; }
         else if (!std::strcmp(a, "--width")) { auto v = next(a); if (!v) return false; c.window.width = std::atoi(v); }
@@ -51,8 +52,18 @@ Engine::Engine(EngineConfig config) : config_(std::move(config)), loop_(GameLoop
         offscreen_ = device_->CreateRenderTarget(config_.window.width, config_.window.height);
         clock_ = &headlessClock_;
         usingHeadlessClock_ = true;
+        std::printf("[Wojcimierz] sRGB: tryb headless - render do celu GL_SRGB8_ALPHA8\n");
     } else {
         clock_ = &systemClock_;
+        if (device_->IsDefaultFramebufferSRGB() && !config_.forceSrgbBlit) {
+            std::printf("[Wojcimierz] sRGB: back buffer okna jest sRGB - render bezposrednio do okna\n");
+        } else {
+            // Okno bez sRGB: renderujemy do wewnetrznego celu sRGB i kopiujemy surowe bajty na ekran,
+            // zeby okno i zrzuty ekranu zawsze wygladaly tak samo.
+            blitToWindow_ = true;
+            EnsureWindowTarget();
+            std::printf("[Wojcimierz] sRGB: back buffer okna NIE jest sRGB - render do GL_SRGB8_ALPHA8 + blit do okna\n");
+        }
     }
     loop_.SetClock(clock_);
     loop_.SetCallbacks({
@@ -62,7 +73,9 @@ Engine::Engine(EngineConfig config) : config_(std::move(config)), loop_(GameLoop
         [this](float) {
             int w = config_.window.width, h = config_.window.height;
             if (!config_.headless) window_->GetFramebufferSize(w, h);
+            if (blitToWindow_) EnsureWindowTarget();
             renderer_->Render(*scene_, offscreen_, w, h);
+            if (blitToWindow_ && w > 0 && h > 0) device_->BlitToDefault(offscreen_, w, h, w, h);
         },
     });
 
@@ -95,6 +108,17 @@ void Engine::RunFrame() {
     if (usingHeadlessClock_) headlessClock_.Tick(config_.headlessFrameTime);
 }
 
+void Engine::EnsureWindowTarget() {
+    int w = 0, h = 0;
+    window_->GetFramebufferSize(w, h);
+    if (w <= 0 || h <= 0) return; // zminimalizowane okno
+    if (offscreen_ && w == offscreenW_ && h == offscreenH_) return;
+    if (offscreen_) device_->DestroyRenderTarget(offscreen_);
+    offscreen_ = device_->CreateRenderTarget(w, h);
+    offscreenW_ = w;
+    offscreenH_ = h;
+}
+
 bool Engine::SaveScreenshot(const std::string& path) {
     int w = config_.window.width, h = config_.window.height;
     if (!config_.headless) window_->GetFramebufferSize(w, h);
@@ -103,6 +127,15 @@ bool Engine::SaveScreenshot(const std::string& path) {
     img.width = w;
     img.height = h;
     img.pixels = device_->ReadPixels(offscreen_, w, h);
+    if (blitToWindow_) {
+        // Kontrola: okno (po blicie) musi miec te same bajty co zrzut z celu sRGB.
+        const auto window = device_->ReadPixels({}, w, h);
+        std::size_t bad = 0;
+        for (std::size_t i = 0; i < window.size() && i < img.pixels.size(); ++i)
+            if (std::abs(int(window[i]) - int(img.pixels[i])) > 2 && (i % 4) != 3) ++bad;
+        std::printf("[Wojcimierz] sRGB: okno vs zrzut - rozne kanaly: %zu\n", bad);
+        if (bad != 0) return false;
+    }
     const bool ok = img.SavePNG(path);
     std::printf("[Wojcimierz] zrzut %s (%dx%d, kolorow: %zu): %s\n", path.c_str(), w, h, img.CountUniqueColors(),
                 ok ? "OK" : "BLAD");

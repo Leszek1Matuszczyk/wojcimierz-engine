@@ -21,12 +21,13 @@ class IInputSource;
 struct EngineConfig {
     WindowDesc window;
     bool headless = false;          // niewidoczne okno + render do offscreen, staly krok czasu
+    bool forceSrgbBlit = false;     // okno: zawsze render do celu sRGB + blit (test sciezki dla okien bez sRGB)
     int maxFrames = 0;              // 0 = bez limitu (tryb okienkowy)
     std::string screenshotPath;     // zrzut ostatniej klatki do PNG (pusty = brak)
     float fixedDeltaTime = 1.0f / 60.0f;
     float headlessFrameTime = 1.0f / 60.0f; // czas klatki w trybie headless (deterministyczny)
 
-    // Parsuje: --headless --frames N --screenshot plik.png --width W --height H
+    // Parsuje: --headless --frames N --screenshot plik.png --width W --height H --force-srgb-blit
     // Zwraca false przy blednych argumentach (komunikat w 'error').
     static bool ParseArgs(int argc, char** argv, EngineConfig& inOut, std::string& error);
 };
@@ -86,7 +87,11 @@ private:
     GameLoop loop_;
     FixedStepPipeline fixedSystems_;
     LateUpdatePipeline lateSystems_;
+    // Cel offscreen sRGB: zawsze w headless; w oknie tylko gdy back buffer nie jest sRGB.
+    void EnsureWindowTarget();
     rhi::RenderTargetHandle offscreen_;
+    int offscreenW_ = 0, offscreenH_ = 0;
+    bool blitToWindow_ = false;
     bool quit_ = false;
 };
 

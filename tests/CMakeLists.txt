@@ -8,7 +8,8 @@ add_executable(wz_unit_tests
   test_game_loop.cpp
   test_input.cpp
   test_mesh_data.cpp
-  test_fixed_step_system.cpp)
+  test_fixed_step_system.cpp
+  test_image_srgb.cpp)
 target_link_libraries(wz_unit_tests PRIVATE wz_core GTest::gtest_main)
 if(MSVC)
   target_compile_options(wz_unit_tests PRIVATE /utf-8)

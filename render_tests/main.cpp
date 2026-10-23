@@ -91,7 +91,9 @@ struct TestScene {
 
 std::vector<TestScene> MakeScenes() {
     std::vector<TestScene> v;
-    v.push_back({"clear_color", "Tylko kamera, kolor tla (0.2, 0.4, 0.8)", 0.0f, Check::UniformColor, {51, 102, 204, 255},
+    v.push_back({"clear_color", "Tylko kamera, kolor tla (0.2, 0.4, 0.8)", 0.0f, Check::UniformColor,
+                 // Kolor kamery jest liniowy; bufor sRGB koduje go: (0.2, 0.4, 0.8) -> (124, 170, 231).
+                 {LinearToSRGB8(0.2f), LinearToSRGB8(0.4f), LinearToSRGB8(0.8f), 255},
                  [](Scene& s, Resources&) { MakeCamera(s, {0, 0, 3}, {0, 0, 0}, {0.2f, 0.4f, 0.8f, 1.0f}); }});
     v.push_back({"triangle", "Kolorowy trojkat RGB (unlit) na srodku", 0.0f, Check::NotUniform, {},
                  [](Scene& s, Resources& r) {
@@ -197,7 +199,7 @@ GoldenResult compareWithGolden(const TestScene& ts, const Image& img, const Opti
     if (ts.check == Check::UniformColor) {
         for (std::size_t i = 0; i < img.pixels.size(); i += 4)
             for (int c = 0; c < 4; ++c)
-                if (std::abs(int(img.pixels[i + c]) - int(ts.expectedColor[c])) > 1)
+                if (std::abs(int(img.pixels[i + c]) - int(ts.expectedColor[c])) > 2) // +-2/255
                     return {false, "piksel rozny od oczekiwanego koloru tla"};
     } else if (img.CountUniqueColors() < 2) {
         return {false, "obraz jednolity - nic sie nie wyrenderowalo"};

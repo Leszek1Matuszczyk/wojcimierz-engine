@@ -103,11 +103,16 @@ Renderuje offscreen nazwane sceny i zapisuje każdą klatkę do `build/render_ou
 
 | Scena | Co sprawdza | Czas symulacji |
 |---|---|---|
-| `clear_color` | kolor tła kamery (każdy piksel = 51,102,204) | 0 s |
+| `clear_color` | kolor tła kamery: liniowe (0.2, 0.4, 0.8) → sRGB (124,170,231) ±2 | 0 s |
 | `triangle` | kolorowy trójkąt RGB (unlit) | 0 s |
 | `rotating_cube` | sześcian obracany w `Update` | 0,5 s |
 | `hierarchy` | rodzic-dziecko-wnuk, ruch w `FixedUpdate` | 1,0 s |
 | `seeded_cubes` | 16 sześcianów z `std::mt19937(1337)` | 0,25 s |
+
+Kolory: shadery liczą liniowo, cele renderu są `GL_SRGB8_ALPHA8` z `GL_FRAMEBUFFER_SRGB`, więc PNG zawierają
+bajty sRGB (z chunkiem `sRGB` w pliku). Okno prosi o back buffer sRGB (`GLFW_SRGB_CAPABLE`); jeśli go nie dostanie,
+silnik renderuje do wewnętrznego celu sRGB i kopiuje go do okna (log `[Wojcimierz] sRGB: ...`), więc okno i zrzuty
+wyglądają identycznie. Test `sandbox_window_srgb_blit` (`--force-srgb-blit`) sprawdza tę ścieżkę.
 
 Determinizm: stały rozmiar 256×256, stały krok 1/60 s, `ManualClock`, ziarno 1337.
 Dwa uruchomienia na tym samym sterowniku dają identyczne pliki.
