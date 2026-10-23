@@ -6,14 +6,14 @@
 #pragma once
 // Ochrona wejsc renderera przed NaN/Inf (wartosci z edytora, skryptow, deserializacji).
 //
-// Czesc 1 - lokalna kopia API z #4 (engine/core/Math.h, commit 56c7658): te same nazwy,
-// sygnatury i zachowanie (sprawdzenie bitowe, ostrzezenie na stderr przy kazdym wywolaniu,
-// wektor zastepowany w calosci).
-// TODO(#4, 56c7658): po rebase na #4 usunac Czesc 1 i zamienic `render_detail::IsFinite`
-//                    na `wz::IsFinite` (#include "core/Math.h") - reszta pliku zostaje.
+// Czesc 1 - API z #4 (engine/core/Math.h, commit 56c7658). Ta galaz zawiera juz feat/core-ci,
+// wiec lokalna kopia zostala zastapiona wz::IsFinite/Sanitize* (using w render_detail, zeby
+// istniejace wywolania render_detail::IsFinite dzialaly bez zmian).
 //
 // Czesc 2 - warstwa renderera: ostrzezenie RAZ na obiekt (renderer czyta pola co klatke,
 // wiec ostrzezenie przy kazdym wywolaniu zalaloby log).
+
+#include "core/Math.h"
 
 #include <glm/gtc/quaternion.hpp>
 #include <glm/vec3.hpp>
@@ -22,15 +22,12 @@
 
 namespace wz::render_detail {
 
-// --- Czesc 1: zgodne z wz:: z #4 (56c7658) ---
-bool IsFinite(float v) noexcept;
-bool IsFinite(double v) noexcept;
-bool IsFinite(const glm::vec3& v) noexcept;
-bool IsFinite(const glm::quat& q) noexcept;
-float SanitizeFloat(float value, float fallback, const char* what);
-double SanitizeDouble(double value, double fallback, const char* what);
-glm::vec3 SanitizeVec3(const glm::vec3& value, const glm::vec3& fallback, const char* what);
-glm::quat SanitizeQuat(const glm::quat& value, const glm::quat& fallback, const char* what);
+// --- Czesc 1: wz:: z #4 (56c7658) - jedna prawda o skonczonosci, jak chcial Wojcimierz ---
+using wz::IsFinite;
+using wz::SanitizeDouble;
+using wz::SanitizeFloat;
+using wz::SanitizeQuat;
+using wz::SanitizeVec3;
 
 // --- Czesc 2: warstwa renderera (zostaje po przejsciu na wz::) ---
 inline bool IsFinite(const glm::vec4& v) noexcept {
