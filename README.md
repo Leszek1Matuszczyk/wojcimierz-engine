@@ -79,7 +79,7 @@ sudo apt-get install -y build-essential cmake ninja-build pkg-config git \
 ```
 
 Na Ubuntu 22.04 `cmake` z apt to 3.22, czyli za stary. Nowszy można zainstalować przez `pip install cmake`
-albo z repozytorium Kitware. Na Wayland nie trzeba nic więcej, bo GLFW działa przez XWayland.
+albo z repozytorium Kitware. GLFW jest budowane tylko z backendem X11, więc na Wayland silnik działa przez XWayland i nie potrzebuje pakietów `wayland-*`.
 
 ### Pobranie i budowanie
 
@@ -96,7 +96,9 @@ cmake -S . -B build-debug -DCMAKE_BUILD_TYPE=Debug
 cmake --build build-debug -j
 ```
 
-Szybsze budowanie z Ninja: dodaj `-G Ninja` do pierwszego polecenia.
+Szybsze budowanie z Ninja: dodaj `-G Ninja` przy **pierwszej** konfiguracji danego katalogu, np.
+`cmake -S . -B build-ninja -G Ninja -DCMAKE_BUILD_TYPE=Release`. CMake nie zmieni generatora istniejącego katalogu
+(`Error: generator : Ninja`), więc przy zmianie generatora usuń katalog albo użyj nowego.
 
 Windows (Developer PowerShell dla VS 2022; generator Visual Studio jest wielokonfiguracyjny, więc
 konfigurację wybieramy przy budowaniu i przy ctest):
