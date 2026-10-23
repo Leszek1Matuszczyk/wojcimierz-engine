@@ -57,6 +57,8 @@ public:
 
     // Dołącza gotowy komponent (np. utworzony przez TypeInfo::create i wypełniony
     // przez serializację) i wywołuje jego Awake(). Transform nie jest dozwolony.
+    // Mądrość Wojcimierza: komponent z serializera dołączamy dopiero z ustawionymi polami,
+    // więc Awake widzi wczytane wartości, a nie domyślne.
     Component& AddComponent(std::unique_ptr<Component> component);
 
     template <typename T>
