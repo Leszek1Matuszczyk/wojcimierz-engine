@@ -152,7 +152,11 @@ std::shared_ptr<Material> MakeMat(glm::vec4 base, float metallic, float roughnes
 GameObject& MakeLightObject(Scene& s, const char* name, glm::vec3 pos, glm::vec3 lookAt) {
     GameObject& go = s.CreateGameObject(name);
     go.transform().SetPosition(pos);
-    go.transform().LookAt(lookAt);
+    // Pionowo w gore/w dol domyslne up=(0,1,0) jest rownolegle do kierunku - Transform z #21 takie
+    // LookAt odrzuca (obrot bez zmian). Wtedy jawne up=(0,0,-1); Wojcimierz zawsze wie, gdzie gora.
+    const glm::vec3 dir = lookAt - pos;
+    const bool vertical = std::abs(dir.x) < 1e-6f && std::abs(dir.z) < 1e-6f;
+    go.transform().LookAt(lookAt, vertical ? glm::vec3(0, 0, -1) : glm::vec3(0, 1, 0));
     return go;
 }
 
