@@ -1,0 +1,8 @@
+add_library(wz_image_compare STATIC ImageCompare.cpp)
+target_include_directories(wz_image_compare PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(wz_image_compare PUBLIC stb_headers)
+if(MSVC)
+  target_compile_options(wz_image_compare PRIVATE /W4 /permissive- /utf-8)
+else()
+  target_compile_options(wz_image_compare PRIVATE -Wall -Wextra -Wpedantic)
+endif()

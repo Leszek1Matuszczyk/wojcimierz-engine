@@ -36,6 +36,7 @@ endif()
 
 if(WZ_BUILD_TESTS OR WZ_BUILD_RENDER_TESTS OR WZ_BUILD_BENCHMARKS)
   enable_testing()
+  add_subdirectory(tests/image_compare)
 endif()
 
 if(WZ_BUILD_RENDER_TESTS)

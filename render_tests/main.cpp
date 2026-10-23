@@ -6,11 +6,19 @@
 //
 //   render_tests [--out DIR] [--scene NAZWA] [--list] [--size N]
 //                [--reference DIR] [--threshold T] [--max-diff-ratio R]
+//                [--min-psnr DB] [--update-golden]
 //
 // Kazda scena: staly rozmiar (domyslnie 256x256), staly krok czasu (1/60 s),
 // staly czas symulacji, ziarno losowania 1337 -> te same piksele przy kazdym uruchomieniu
 // na tym samym sterowniku (CI: Mesa llvmpipe).
 // Wynik: <DIR>/<scena>.png (domyslnie build/render_out/).
+// Porownanie z tests/golden/<scena>.png (albo --reference DIR): roznica <= 2/255
+// nie jest bledem, najwyzej 0.1% pikseli moze ja przekroczyc, PSNR >= 40 dB.
+// Brak pliku wzorca nie oblewa sceny: SKIP i dotychczasowe sprawdzenie
+// (UniformColor albo NotUniform), dopoki wzorce nie zostana dodane.
+// --update-golden kopiuje zrzuty do katalogu wzorcow i odmawia, gdy GL_RENDERER
+// nie zawiera "llvmpipe".
+#include "ImageCompare.h"
 #include "core/Clock.h"
 #include "core/GameLoop.h"
 #include "core/Time.h"
@@ -23,6 +31,8 @@
 #include "render/Shader.h"
 #include "scene/Scene.h"
 
+#include <cctype>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -34,6 +44,9 @@
 
 #ifndef WZ_RENDER_OUT_DIR
 #define WZ_RENDER_OUT_DIR "render_out"
+#endif
+#ifndef WZ_GOLDEN_DIR
+#define WZ_GOLDEN_DIR "tests/golden"
 #endif
 
 using namespace wz;
@@ -156,21 +169,26 @@ struct Options {
     int size = 256;
     int threshold = 2;
     double maxDiffRatio = 0.001;
+    double minPsnr = 40.0;
     bool list = false;
+    bool updateGolden = false;
 };
 
 // ============================================================================
 // HOOK DLA KOMPARATORA TESTERA (golden images)
 // ----------------------------------------------------------------------------
 // compareWithGolden() jest JEDYNYM miejscem, przez ktore przechodzi ocena
-// kazdej sceny. Obecnie robi tylko podstawowy sanity-check (oczekiwany kolor
-// tla / obraz niejednolity) oraz - opcjonalnie, z --reference DIR - proste
-// porownanie z wzorcem. Tu wpina sie komparator zespolu testow (np. zapis
-// <scena>_diff.png do render_out/, tolerancje per scena, raport JSON).
+// kazdej sceny. Gdy wzorzec istnieje: progi 2/255, 0.1% pikseli i PSNR >= 40 dB
+// oraz <scena>_diff.png przy porazce. Brak wzorca to SKIP i fallback
+// UniformColor/NotUniform. --update-golden kopiuje zrzut (odmowa poza llvmpipe
+// jest wczesniej, po odczycie GL_RENDERER).
 // ============================================================================
 struct GoldenResult {
     bool ok = true;
+    bool skipped = false;
+    bool compared = false;
     std::string message;
+    wz::imgcmp::Result metrics{};
 };
 
 GoldenResult compareWithGolden(const TestScene& ts, const Image& img, const Options& opt);
@@ -187,39 +205,111 @@ bool Parse(int argc, char** argv, Options& o) {
         else if (a == "--size" && (v = need())) o.size = std::atoi(v);
         else if (a == "--threshold" && (v = need())) o.threshold = std::atoi(v);
         else if (a == "--max-diff-ratio" && (v = need())) o.maxDiffRatio = std::atof(v);
+        else if (a == "--min-psnr" && (v = need())) o.minPsnr = std::atof(v);
+        else if (a == "--update-golden") o.updateGolden = true;
         else { std::fprintf(stderr, "Nieznana/niepelna opcja: %s\n", a.c_str()); return false; }
     }
     return o.size > 0;
 }
 
+std::string GoldenDir(const Options& opt) { return opt.referenceDir.empty() ? std::string(WZ_GOLDEN_DIR) : opt.referenceDir; }
+
+bool IsLlvmPipe(const std::string& renderer) {
+    std::string lower;
+    lower.reserve(renderer.size());
+    for (unsigned char c : renderer) lower.push_back(static_cast<char>(std::tolower(c)));
+    return lower.find("llvmpipe") != std::string::npos;
+}
+
+const char* CheckName(Check check) { return check == Check::UniformColor ? "UniformColor" : "NotUniform"; }
+
+// Dotychczasowy sanity-check. Fallback, gdy wzorca jeszcze nie ma, oraz przy --update-golden.
+bool FallbackOk(const Image& img, const TestScene& ts, std::string& why) {
+    if (ts.check == Check::UniformColor) {
+        for (std::size_t i = 0; i < img.pixels.size(); i += 4) {
+            for (int c = 0; c < 4; ++c) {
+                if (std::abs(int(img.pixels[i + c]) - int(ts.expectedColor[c])) > 2) {
+                    why = "UniformColor: piksel rozny od oczekiwanego koloru tla";
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+    if (img.CountUniqueColors() < 2) {
+        why = "NotUniform: obraz jednolity - nic sie nie wyrenderowalo";
+        return false;
+    }
+    return true;
+}
+
+bool CopyGolden(const std::string& src, const std::string& destDir, const std::string& scene, std::string& why) {
+    std::error_code ec;
+    std::filesystem::create_directories(destDir, ec);
+    if (ec) {
+        why = "nie mozna utworzyc katalogu wzorcow: " + ec.message();
+        return false;
+    }
+    const auto dest = std::filesystem::path(destDir) / (scene + ".png");
+    std::filesystem::copy_file(src, dest, std::filesystem::copy_options::overwrite_existing, ec);
+    if (ec) {
+        why = "nie mozna skopiowac wzorca: " + ec.message();
+        return false;
+    }
+    why = "zaktualizowano wzorzec " + dest.string();
+    return true;
+}
+
+// Porownanie zapisanego PNG ze wzorcem. Przy porazce dokleja sciezke <scena>_diff.png.
+wz::imgcmp::Result CompareSavedWithGolden(const std::string& actualPath, const std::string& goldenPath,
+                                          const wz::imgcmp::Thresholds& thresholds) {
+    wz::imgcmp::Result result = wz::imgcmp::ComparePngFiles(actualPath, goldenPath, thresholds);
+    const std::filesystem::path actual(actualPath);
+    const std::filesystem::path diffPath = actual.parent_path() / (actual.stem().string() + "_diff.png");
+    std::error_code ec;
+    if (result.passed) {
+        std::filesystem::remove(diffPath, ec);
+        return result;
+    }
+    wz::imgcmp::Image actualImg, goldenImg;
+    std::string errA, errG;
+    if (wz::imgcmp::LoadPng(actualPath, actualImg, errA) && wz::imgcmp::LoadPng(goldenPath, goldenImg, errG) &&
+        wz::imgcmp::SaveDiffPng(diffPath.string(), actualImg.rgba.data(), actualImg.width, actualImg.height,
+                                goldenImg.rgba.data(), goldenImg.width, goldenImg.height, 10)) {
+        result.reason += "; roznica x10: " + diffPath.string();
+    }
+    return result;
+}
 
 GoldenResult compareWithGolden(const TestScene& ts, const Image& img, const Options& opt) {
-    GoldenResult r;
-    // 1) Sanity-check zalezny od sceny.
-    if (ts.check == Check::UniformColor) {
-        for (std::size_t i = 0; i < img.pixels.size(); i += 4)
-            for (int c = 0; c < 4; ++c)
-                if (std::abs(int(img.pixels[i + c]) - int(ts.expectedColor[c])) > 2) // +-2/255
-                    return {false, "piksel rozny od oczekiwanego koloru tla"};
-    } else if (img.CountUniqueColors() < 2) {
-        return {false, "obraz jednolity - nic sie nie wyrenderowalo"};
+    const std::string path = (std::filesystem::path(opt.outDir) / (ts.name + ".png")).string();
+    const std::string goldenDir = GoldenDir(opt);
+    const std::string goldenPath = (std::filesystem::path(goldenDir) / (ts.name + ".png")).string();
+
+    if (opt.updateGolden) {
+        std::string why;
+        if (!FallbackOk(img, ts, why)) return {false, false, false, why, {}};
+        if (!CopyGolden(path, goldenDir, ts.name, why)) return {false, false, false, why, {}};
+        return {true, false, false, why, {}};
     }
-    // 2) Opcjonalne porownanie z wzorcem (--reference DIR).
-    if (!opt.referenceDir.empty()) {
-        const std::string refPath = (std::filesystem::path(opt.referenceDir) / (ts.name + ".png")).string();
-        Image ref;
-        if (!Image::LoadPNG(refPath, ref)) {
-            std::printf("  (brak wzorca %s - pomijam porownanie)\n", refPath.c_str());
-            return r;
-        }
-        const ImageDiff d = CompareImages(img, ref, opt.threshold);
-        if (d.sizeMismatch) return {false, "inny rozmiar niz wzorzec"};
-        if (d.differingRatio > opt.maxDiffRatio)
-            return {false, "rozni sie od wzorca: " + std::to_string(d.differingPixels) + " px (" +
-                               std::to_string(d.differingRatio * 100.0) + "%)"};
+
+    std::error_code ec;
+    if (!std::filesystem::is_regular_file(goldenPath, ec)) {
+        std::string why;
+        if (!FallbackOk(img, ts, why)) return {false, true, false, "brak wzorca: " + goldenPath + "; " + why, {}};
+        return {true, true, false,
+                "brak wzorca: " + goldenPath + " - SKIP porownania (wzorce nie sa jeszcze w repo); fallback " +
+                    CheckName(ts.check) + " OK",
+                {}};
     }
-    // TODO(tester): komparator golden images (diff PNG, raport) - tutaj.
-    return r;
+
+    wz::imgcmp::Thresholds thresholds;
+    thresholds.perChannel = opt.threshold;
+    thresholds.maxOutlierRatio = opt.maxDiffRatio;
+    thresholds.minPsnrDb = opt.minPsnr;
+    const wz::imgcmp::Result metrics = CompareSavedWithGolden(path, goldenPath, thresholds);
+    if (!metrics.passed) return {false, false, true, metrics.reason, metrics};
+    return {true, false, true, {}, metrics};
 }
 
 } // namespace
@@ -245,6 +335,16 @@ int main(int argc, char** argv) {
         auto device = rhi::CreateOpenGLDevice(&Window::GetProcAddress);
         const auto info = device->GetInfo();
         std::printf("[render_tests] %s | %s | %s\n", info.renderer.c_str(), info.version.c_str(), opt.outDir.c_str());
+        if (opt.updateGolden && !IsLlvmPipe(info.renderer)) {
+            std::fprintf(stderr,
+                         "[render_tests] ODMWA --update-golden: GL_RENDERER=\"%s\" nie jest Mesa llvmpipe.\n"
+                         "Wzorce w tests/golden/ wolno generowac tylko na llvmpipe "
+                         "(LIBGL_ALWAYS_SOFTWARE=1, ewentualnie xvfb-run).\n",
+                         info.renderer.c_str());
+            return 2;
+        }
+        if (opt.updateGolden)
+            std::printf("[render_tests] --update-golden: potwierdzono llvmpipe, zapis do %s\n", GoldenDir(opt).c_str());
 
         Resources res{device.get(), Shader::CreateDefaultLit(*device), Mesh::Create(*device, MeshData::Cube()),
                       Mesh::Create(*device, MeshData::Triangle()), Mesh::Create(*device, MeshData::Quad())};
@@ -252,7 +352,7 @@ int main(int argc, char** argv) {
         auto target = device->CreateRenderTarget(opt.size, opt.size);
         std::filesystem::create_directories(opt.outDir);
 
-        int failures = 0, ran = 0;
+        int failures = 0, ran = 0, skippedGoldens = 0;
         for (const TestScene& ts : scenes) {
             if (!opt.only.empty() && opt.only != ts.name) continue;
             ++ran;
@@ -279,20 +379,32 @@ int main(int argc, char** argv) {
             std::string why = ok ? "" : "zapis PNG";
 
             const std::size_t colors = img.CountUniqueColors();
+            GoldenResult golden;
             if (ok) {
-                const GoldenResult g = compareWithGolden(ts, img, opt);
-                ok = g.ok;
-                why = g.message;
+                golden = compareWithGolden(ts, img, opt);
+                ok = golden.ok;
+                why = golden.message;
+                if (golden.skipped) ++skippedGoldens;
             }
 
-            std::printf("[%s] %-14s %dx%d t=%.3fs klatek=%d krokow_fixed=%llu kolorow=%zu -> %s %s\n", ok ? " OK " : "FAIL",
+            const char* tag = !ok ? "FAIL" : (golden.skipped ? "SKIP" : " OK ");
+            std::printf("[%s] %-14s %dx%d t=%.3fs klatek=%d krokow_fixed=%llu kolorow=%zu", tag,
                         ts.name.c_str(), opt.size, opt.size, ts.simulateSeconds, frames,
-                        static_cast<unsigned long long>(Time::fixedStepCount), colors, path.c_str(), why.c_str());
+                        static_cast<unsigned long long>(Time::fixedStepCount), colors);
+            if (golden.compared) {
+                if (std::isinf(golden.metrics.psnrDb))
+                    std::printf(" max=%d outlier=%.4f%% PSNR=inf", golden.metrics.maxChannelDiff,
+                                golden.metrics.outlierRatio * 100.0);
+                else
+                    std::printf(" max=%d outlier=%.4f%% PSNR=%.2fdB", golden.metrics.maxChannelDiff,
+                                golden.metrics.outlierRatio * 100.0, golden.metrics.psnrDb);
+            }
+            std::printf(" -> %s %s\n", path.c_str(), why.c_str());
             if (!ok) ++failures;
         }
         device->DestroyRenderTarget(target);
         if (ran == 0) { std::fprintf(stderr, "Brak sceny o nazwie '%s' (uzyj --list)\n", opt.only.c_str()); return 1; }
-        std::printf("[render_tests] scen: %d, bledow: %d\n", ran, failures);
+        std::printf("[render_tests] scen: %d, bledow: %d, pominietych wzorcow: %d\n", ran, failures, skippedGoldens);
         return failures == 0 ? 0 : 4;
     } catch (const std::exception& e) {
         std::fprintf(stderr, "[render_tests] blad: %s\n", e.what());
