@@ -4,6 +4,7 @@
 // =============================================================================
 #pragma once
 #include "core/Clock.h"
+#include "core/FixedStepSystem.h"
 #include "core/GameLoop.h"
 #include "platform/Window.h"
 #include "render/RHI.h"
@@ -52,6 +53,13 @@ public:
     // Wstrzykniecie zrodla wejscia (np. FakeInput). Domyslnie GLFW.
     void SetInputSource(IInputSource* source);
 
+    // Systemy kroku stalego (np. PhysicsWorld). W kazdym kroku: PreFixedUpdate systemow ->
+    // FixedUpdate komponentow -> PostFixedUpdate systemow (Unity: skrypty, potem krok fizyki).
+    // Engine nie przejmuje wlasnosci; system musi zyc dluzej niz rejestracja.
+    void AddFixedStepSystem(IFixedStepSystem* system, int order = 0) { fixedSystems_.Add(system, order); }
+    bool RemoveFixedStepSystem(IFixedStepSystem* system) { return fixedSystems_.Remove(system); }
+    FixedStepPipeline& GetFixedStepPipeline() { return fixedSystems_; }
+
     // Uruchamia petle gry. Zwraca kod wyjscia procesu (0 = OK).
     int Run();
     // Jedna klatka: zdarzenia okna, Input::Update, krok petli (FixedUpdate*/Update/LateUpdate) i render.
@@ -72,6 +80,7 @@ private:
     IClock* clock_ = nullptr;
     bool usingHeadlessClock_ = false;
     GameLoop loop_;
+    FixedStepPipeline fixedSystems_;
     rhi::RenderTargetHandle offscreen_;
     bool quit_ = false;
 };

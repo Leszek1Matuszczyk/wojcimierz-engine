@@ -56,7 +56,7 @@ Engine::Engine(EngineConfig config) : config_(std::move(config)), loop_(GameLoop
     }
     loop_.SetClock(clock_);
     loop_.SetCallbacks({
-        [this](float dt) { scene_->FixedUpdate(dt); },
+        [this](float dt) { fixedSystems_.Run(dt, [this](float d) { scene_->FixedUpdate(d); }); },
         [this](float dt) { scene_->Update(dt); },
         [this](float dt) { scene_->LateUpdate(dt); },
         [this](float) {

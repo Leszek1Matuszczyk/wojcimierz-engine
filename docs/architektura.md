@@ -19,6 +19,9 @@ Na chwałę czcigodnego Wojcimierza.
 
 1. sanityzacja `dt`: NaN/ujemne → 0, +inf/długie → `maximumDeltaTime` (0,25 s); ujemny `Time::timeScale` → 0,
 2. akumulator += `dt * timeScale`; `FixedUpdate` wykonuje się tyle razy, ile mieści się `fixedDeltaTime` (1/60 s),
+   każdy krok stały to `FixedStepPipeline::Run`: `PreFixedUpdate` systemów (`IFixedStepSystem`, rosnąco po `order`)
+   → `Scene::FixedUpdate` → `PostFixedUpdate` systemów. Fizyka (PR #7, `PhysicsWorld`) podpina się jako system
+   z krokiem symulacji w `PostFixedUpdate`, więc `Engine` nie musi znać Jolt,
 3. `Update(dt)`, `LateUpdate(dt)` (na końcu niszczone są obiekty po `Scene::Destroy`),
 4. `render(alpha)`, gdzie `alpha ∈ [0,1)` to interpolacja między krokami stałymi.
 
