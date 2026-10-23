@@ -8,6 +8,7 @@
 #include "scene/Component.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cstdio>
 #include <cstdlib>
 #include <memory>
@@ -46,7 +47,10 @@ bool ComponentRegistry::DefaultStrict() {
     return true;
 #else
     const char* env = std::getenv("WZ_REGISTRY_STRICT");
-    return env && *env && std::string_view(env) != "0";
+    if (!env || !*env) return false;
+    std::string v(env);
+    for (char& ch : v) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+    return !(v == "0" || v == "false" || v == "off" || v == "no");
 #endif
 }
 

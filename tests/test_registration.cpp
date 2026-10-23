@@ -145,15 +145,21 @@ TEST(RegistrationDeathTest, StrictModeFromEnvironmentVariable) {
         "tryb strict");
 }
 
-TEST(Registration, StrictModeOffByDefaultAndZeroDisables) {
+TEST(Registration, StrictEnvValuesAndDefault) {
 #ifdef WZ_REGISTRY_STRICT
     EXPECT_TRUE(ComponentRegistry::DefaultStrict());
     GTEST_SKIP() << "strict wkompilowany";
 #endif
     const char* old = std::getenv("WZ_REGISTRY_STRICT");
     const std::string saved = old ? old : "";
-    setenv("WZ_REGISTRY_STRICT", "0", 1);
-    EXPECT_FALSE(ComponentRegistry::DefaultStrict());
+    for (const char* off : {"0", "", "false", "FALSE", "False", "off", "OFF", "no", "No"}) {
+        setenv("WZ_REGISTRY_STRICT", off, 1);
+        EXPECT_FALSE(ComponentRegistry::DefaultStrict()) << "'" << off << "'";
+    }
+    for (const char* on : {"1", "true", "ON", "yes"}) {
+        setenv("WZ_REGISTRY_STRICT", on, 1);
+        EXPECT_TRUE(ComponentRegistry::DefaultStrict()) << "'" << on << "'";
+    }
     unsetenv("WZ_REGISTRY_STRICT");
     EXPECT_FALSE(ComponentRegistry::DefaultStrict());
     if (old) setenv("WZ_REGISTRY_STRICT", saved.c_str(), 1);
