@@ -41,6 +41,9 @@ jobs:
       GALLIUM_DRIVER: llvmpipe
     steps:
       - uses: actions/checkout@v4
+        with:
+          # tests/golden/*.png sa w Git LFS. Bez tego render_tests dostaje wskaznik zamiast PNG.
+          lfs: true
       - name: Zaleznosci systemowe
         run: sudo apt-get update && sudo apt-get install -y $APT_PACKAGES
       - name: Cache FetchContent (build/_deps)
@@ -130,6 +133,8 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+          # tests/golden/*.png sa w Git LFS. Bez tego render_tests dostaje wskaznik zamiast PNG.
+          lfs: true
       - name: Konfiguracja
         run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
       - name: Budowanie

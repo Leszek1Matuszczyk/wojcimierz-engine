@@ -1,0 +1,2 @@
+# Wzorce render_tests. Generowane wylacznie na Mesa llvmpipe.
+tests/golden/*.png filter=lfs diff=lfs merge=lfs -text
