@@ -85,3 +85,58 @@ TEST(TransformFallback, PhysicsPoseValidatesPartsIndependently) {
     EXPECT_EQ(t.GetLocalRotation(), glm::quat(1, 0, 0, 0));
     EXPECT_EQ(t.GetChangeVersion(), v0);  // fizyka nadal nie podbija wersji
 }
+
+// #24: odrzucone wywolanie nie moze podbic changeVersion ani ustawic dirty -
+// inaczej fizyka widzi teleport w kazdej klatce. Wojcimierz nie lubi falszywych alarmow.
+TEST(TransformVersion, RejectedSettersDoNotBumpVersionNorDirty) {
+    Scene s;
+    auto& t = s.CreateGameObject().transform();
+    t.SetLocalEulerAngles({10, 20, 30});
+    (void)t.GetLocalToWorldMatrix();
+    const auto v0 = t.GetChangeVersion();
+    testing::internal::CaptureStderr();
+    t.SetLocalRotation(glm::quat(kNaN, 0, 0, 0));
+    t.SetLocalRotation(glm::quat(0, 0, 0, 0));
+    t.SetRotation(glm::quat(0, 0, 0, 0));
+    t.SetRotation(glm::quat(1, kInf, 0, 0));
+    t.SetLocalPosition({kNaN, 0, 0});
+    t.SetLocalScale({kInf, 1, 1});
+    t.LookAt({0, 5, 0}, {0, 1, 0});  // up rownolegle do kierunku -> NaN -> odrzucone
+    t.SetWorldPoseFromPhysics({kNaN, 0, 0}, glm::quat(0, 0, 0, 0));
+    (void)testing::internal::GetCapturedStderr();
+    EXPECT_EQ(t.GetChangeVersion(), v0);
+    EXPECT_FALSE(t.IsWorldMatrixDirty());
+}
+
+TEST(TransformVersion, IdenticalValueIsNoOp) {
+    Scene s;
+    auto& t = s.CreateGameObject().transform();
+    t.SetLocalPosition({1, 2, 3});
+    t.SetLocalScale({2, 2, 2});
+    t.SetLocalRotation(glm::quat(glm::radians(glm::vec3(0, 30, 0))));
+    (void)t.GetLocalToWorldMatrix();
+    const auto v0 = t.GetChangeVersion();
+    t.SetLocalPosition({1, 2, 3});
+    t.SetLocalScale({2, 2, 2});
+    t.SetLocalRotation(t.GetLocalRotation());
+    t.Translate({0, 0, 0});
+    EXPECT_EQ(t.GetChangeVersion(), v0);
+    EXPECT_FALSE(t.IsWorldMatrixDirty());
+}
+
+TEST(TransformVersion, PhysicsPartialRejectStillAppliesGoodPart) {
+    Scene s;
+    auto& t = s.CreateGameObject().transform();
+    (void)t.GetLocalToWorldMatrix();
+    testing::internal::CaptureStderr();
+    // Zly obrot i ta sama pozycja -> nic sie nie zmienia, brak dirty.
+    t.SetWorldPoseFromPhysics({0, 0, 0}, glm::quat(kNaN, 0, 0, 0));
+    EXPECT_FALSE(t.IsWorldMatrixDirty());
+    // Dobra pozycja + zly obrot -> pozycja przyjeta, cache uniewazniony, wersja bez zmian.
+    const auto v0 = t.GetChangeVersion();
+    t.SetWorldPoseFromPhysics({1, 0, 0}, glm::quat(0, 0, 0, 0));
+    (void)testing::internal::GetCapturedStderr();
+    EXPECT_EQ(t.GetLocalPosition(), glm::vec3(1, 0, 0));
+    EXPECT_TRUE(t.IsWorldMatrixDirty());
+    EXPECT_EQ(t.GetChangeVersion(), v0);
+}

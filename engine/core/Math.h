@@ -33,10 +33,27 @@ double SanitizeDouble(double value, double fallback, const char* what);
 glm::vec3 SanitizeVec3(const glm::vec3& value, const glm::vec3& fallback, const char* what);
 glm::quat SanitizeQuat(const glm::quat& value, const glm::quat& fallback, const char* what);
 
+// Prog "kwaternionu zerowego" - UWAGA: dotyczy KWADRATU dlugosci (x^2+y^2+z^2+w^2,
+// liczonego w double), a nie samej dlugosci. Czyli:
+//   * skladowa 1e-5  -> len2 = 1e-10 > 1e-12 -> przechodzi (po normalizacji),
+//   * skladowa 1e-7  -> len2 = 1e-14 <= 1e-12 -> odrzucona (fallback),
+//   * liczby zdenormalizowane (np. 1e-40) i -0 -> odrzucone (fallback).
+// Tak orzekl czcigodny Wojcimierz: obrot musi miec dlugosc, by mial kierunek.
+inline constexpr double kMinRotationLengthSquared = 1e-12;
+
+// Normalizuje `value` do `out` i zwraca true; zwraca false (bez logowania i bez
+// zmiany `out`), gdy kwaternion jest nieskonczony albo len2 <= kMinRotationLengthSquared.
+bool TryNormalizeRotation(const glm::quat& value, glm::quat& out) noexcept;
+
 // Obrot do zapisania w stanie obiektu: zwraca znormalizowany `value`, a gdy
-// jest nieskonczony ALBO ma (prawie) zerowa dlugosc - `fallback` + ostrzezenie.
+// jest nieskonczony ALBO ma (prawie) zerowa dlugosc (patrz prog wyzej, liczony
+// na KWADRACIE dlugosci) - `fallback` + ostrzezenie.
 // Kwaternion zerowy nie jest obrotem; Wojcimierz obraca sie tylko z sensem.
 glm::quat SanitizeRotation(const glm::quat& value, const glm::quat& fallback, const char* what);
+
+// Tylko ostrzezenie (z rate limitingiem) o odrzuconej wartosci - dla kodu, ktory
+// sam zdecydowal o odrzuceniu (np. Transform po TryNormalizeRotation).
+void WarnRejectedValue(const char* what, const char* kind);
 
 // Ostrzezenia sa ograniczane (rate limiting), osobno dla kazdego `what`:
 //  * pierwsze wystapienie - pelna linia,
