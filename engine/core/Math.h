@@ -53,25 +53,37 @@ bool TryNormalizeRotation(const glm::quat& value, glm::quat& out) noexcept;
 glm::quat SanitizeRotation(const glm::quat& value, const glm::quat& fallback, const char* what);
 
 // -----------------------------------------------------------------------------
-// Porownania z tolerancja ULP (#27) - na chwale czcigodnego Wojcimierza, ktory
-// wie, ze float po drodze przez macierz rodzica gubi ostatni bit.
+// Porownania "ta sama wartosc po round-tripie przez rodzica" (#27) - na chwale
+// czcigodnego Wojcimierza, ktory wie, ze float po drodze przez macierz rodzica
+// gubi ostatnie bity, ale nie pozwala zgubic prawdziwego ruchu.
 // -----------------------------------------------------------------------------
 // Odleglosc w ULP miedzy dwoma floatami (ile reprezentowalnych liczb dzieli a i b).
-// +0 i -0 sa w odleglosci 0. NaN/Inf -> UINT32_MAX (nigdy "prawie rowne").
+// +0 i -0 sa w odleglosci 0. NaN/Inf -> UINT32_MAX.
 std::uint32_t UlpDistance(float a, float b) noexcept;
 
-// a i b roznia sie o co najwyzej maxUlps reprezentowalnych floatow.
-bool NearlyEqualUlps(float a, float b, std::uint32_t maxUlps = 4) noexcept;
+// Tolerancja OBROTU dla seterow swiatowych: max |roznica skladowej| po
+// kanonizacji znaku (q ~ -q). Pomiar (20 000 losowych przypadkow, ziarno 0x5EED,
+// rodzic i dziadek ze skala (2, 0.5, 3) oraz losowa 0.5..2, eps = 1.19e-7):
+//   - round-trip SetRotation(q) -> GetRotation(): max 1.79e-7 (1.50 eps),
+//   - celowy obrot o 1e-6 rad wokol losowej osi: 2.38e-7 .. 5.36e-7 (2.0..4.5 eps).
+// 2e-7 lezy pomiedzy: zapas 0.21e-7 nad szumem i 0.38e-7 pod najmniejszym
+// celowym obrotem. NIE uzywamy ULP ani |dot| - 4 ULP przy skladowej ~1 to ~4 eps
+// i polykaloby obrot o 1e-6 rad.
+inline constexpr float kWorldRoundTripEpsilon = 2e-7f;
 
-// Wektory: kazda skladowa w maxUlps ALBO |a-b| <= maxUlps * ULP(najwiekszej
-// skladowej wektora). Drugi warunek jest potrzebny, bo skladowa bliska zeru
-// (np. 0 vs 3e-8 po obrocie) ma ogromna odleglosc ULP, choc blad jest rzedu
-// ULP calego wektora.
-bool NearlyEqualUlps(const glm::vec3& a, const glm::vec3& b, std::uint32_t maxUlps = 4) noexcept;
+// Tolerancja POZYCJI dla seterow swiatowych: |roznica| <= k * max(1, |a|, |b|)
+// (norma max po skladowych). Pomiar jak wyzej (pozycje swiatowe +-20): blad
+// round-tripu SetPosition(p) -> GetPosition() max 1.62e-5 bezwzglednie,
+// max 1.50e-6 wzglednie (12.5 eps). k = 3e-6 (25 eps) daje zapas 2x. Przesuniecie
+// o 1e-4 jest zawsze wykryte, dopoki |pozycja| <= 32 (3e-6 * 32 = 9.6e-5 < 1e-4).
+inline constexpr float kWorldPositionRelTolerance = 3e-6f;
 
-// Kwaterniony jako OBROTY: q i -q to ten sam obrot. Skladowe porownywane jak
-// dla wektorow (skala = najwieksza skladowa).
-bool SameRotationUlps(const glm::quat& a, const glm::quat& b, std::uint32_t maxUlps = 4) noexcept;
+// max |a_i - c_i| dla c = (dot(a,b) < 0 ? -b : b). NaN/Inf -> +inf.
+float RotationMaxDelta(const glm::quat& a, const glm::quat& b) noexcept;
+// RotationMaxDelta(a, b) <= maxComponentDelta.
+bool SameRotationWithin(const glm::quat& a, const glm::quat& b, float maxComponentDelta) noexcept;
+// max_i |a_i - b_i| <= relTolerance * max(1, |a|_inf, |b|_inf). NaN/Inf -> false.
+bool SamePositionWithin(const glm::vec3& a, const glm::vec3& b, float relTolerance) noexcept;
 
 // Tylko ostrzezenie (z rate limitingiem) o odrzuconej wartosci - dla kodu, ktory
 // sam zdecydowal o odrzuceniu (np. Transform po TryNormalizeRotation).

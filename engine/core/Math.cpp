@@ -5,6 +5,8 @@
 // ============================================================
 #include "core/Math.h"
 
+#include <glm/common.hpp>
+
 #include <bit>
 #include <cstdint>
 #include <algorithm>
@@ -135,23 +137,6 @@ std::int64_t OrderedBits(float v) noexcept {
     const auto bits = std::bit_cast<std::uint32_t>(v);
     return (bits & 0x80000000u) ? -static_cast<std::int64_t>(bits & 0x7FFFFFFFu) : static_cast<std::int64_t>(bits);
 }
-// Wielkosc jednego ULP w okolicy |v| (dla 0 - najmniejszy denormal).
-float UlpAt(float v) noexcept {
-    v = std::fabs(v);
-    return std::nextafter(v, std::numeric_limits<float>::infinity()) - v;
-}
-bool ComponentsNear(const float* a, const float* b, int n, std::uint32_t maxUlps) noexcept {
-    float scale = 0.0f;
-    for (int i = 0; i < n; ++i) scale = std::max({scale, std::fabs(a[i]), std::fabs(b[i])});
-    const float absTol = static_cast<float>(maxUlps) * UlpAt(scale);
-    for (int i = 0; i < n; ++i) {
-        if (!IsFinite(a[i]) || !IsFinite(b[i])) return false;
-        if (UlpDistance(a[i], b[i]) <= maxUlps) continue;
-        if (std::fabs(a[i] - b[i]) <= absTol) continue;
-        return false;
-    }
-    return true;
-}
 }  // namespace
 
 std::uint32_t UlpDistance(float a, float b) noexcept {
@@ -162,16 +147,24 @@ std::uint32_t UlpDistance(float a, float b) noexcept {
                                                           : static_cast<std::uint32_t>(ad);
 }
 
-bool NearlyEqualUlps(float a, float b, std::uint32_t maxUlps) noexcept { return UlpDistance(a, b) <= maxUlps; }
-
-bool NearlyEqualUlps(const glm::vec3& a, const glm::vec3& b, std::uint32_t maxUlps) noexcept {
-    const float fa[3] = {a.x, a.y, a.z}, fb[3] = {b.x, b.y, b.z};
-    return ComponentsNear(fa, fb, 3, maxUlps);
+float RotationMaxDelta(const glm::quat& a, const glm::quat& b) noexcept {
+    if (!IsFinite(a) || !IsFinite(b)) return std::numeric_limits<float>::infinity();
+    // Kanonizacja znaku: q i -q to ten sam obrot, wiec porownujemy z ta wersja b,
+    // ktora lezy po tej samej stronie co a. Wojcimierz nie daje sie zwiesc minusowi.
+    const glm::quat c = glm::dot(a, b) < 0.0f ? -b : b;
+    return std::max({std::fabs(a.x - c.x), std::fabs(a.y - c.y), std::fabs(a.z - c.z), std::fabs(a.w - c.w)});
 }
 
-bool SameRotationUlps(const glm::quat& a, const glm::quat& b, std::uint32_t maxUlps) noexcept {
-    const float fa[4] = {a.x, a.y, a.z, a.w}, fb[4] = {b.x, b.y, b.z, b.w}, nb[4] = {-b.x, -b.y, -b.z, -b.w};
-    return ComponentsNear(fa, fb, 4, maxUlps) || ComponentsNear(fa, nb, 4, maxUlps);
+bool SameRotationWithin(const glm::quat& a, const glm::quat& b, float maxComponentDelta) noexcept {
+    return RotationMaxDelta(a, b) <= maxComponentDelta;  // NaN/Inf -> +inf -> false
+}
+
+bool SamePositionWithin(const glm::vec3& a, const glm::vec3& b, float relTolerance) noexcept {
+    if (!IsFinite(a) || !IsFinite(b)) return false;
+    const glm::vec3 d = glm::abs(a - b);
+    const float scale = std::max({1.0f, std::fabs(a.x), std::fabs(a.y), std::fabs(a.z), std::fabs(b.x), std::fabs(b.y),
+                                  std::fabs(b.z)});
+    return std::max({d.x, d.y, d.z}) <= relTolerance * scale;
 }
 
 }  // namespace wz

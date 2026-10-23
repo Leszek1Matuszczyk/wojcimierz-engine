@@ -89,11 +89,10 @@ private:
     // Setery lokalne porownuja DOKLADNIE (celowe mikroruchy nie gina).
     bool AssignLocalPosition(const glm::vec3& p);
     bool AssignLocalRotation(const glm::quat& r);
-    // Setery swiatowe / konwersje (SetPosition, SetRotation, SetWorldPose*, Euler):
-    // wynik po przeliczeniu przez rodzica porownujemy z tolerancja kilku ULP (#27),
-    // a dla kwaternionu q == -q. W tolerancji - brak zmiany, nic nie zapisujemy.
-    bool AssignLocalPositionFromWorld(const glm::vec3& p);
-    bool AssignLocalRotationFromWorld(const glm::quat& r);
+    // Konwersje obrotu (SetLocalEulerAngles, Rotate lokalny): nowy lokalny obrot
+    // porownujemy z zapisanym z tolerancja kWorldRoundTripEpsilon po kanonizacji
+    // znaku (#27). W tolerancji - brak zmiany, nic nie zapisujemy.
+    bool AssignLocalRotationConverted(const glm::quat& r);
 
     glm::vec3 localPosition_{0.0f};
     glm::quat localRotation_{1.0f, 0.0f, 0.0f, 0.0f};

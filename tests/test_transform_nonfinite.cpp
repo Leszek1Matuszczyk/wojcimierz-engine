@@ -145,9 +145,10 @@ TEST(TransformVersion, PhysicsPartialRejectStillAppliesGoodPart) {
 }
 
 // -----------------------------------------------------------------------------
-// #27: setery swiatowe z tolerancja ULP. SetPosition(GetPosition()) i
-// SetRotation(GetRotation()) pod obroconym i przeskalowanym rodzicem to no-op,
-// a zmiana o 1e-4 to prawdziwy ruch. Ziarno stale (powtarzalne w CI), nadpisywalne
+// #27: setery swiatowe z tolerancja round-tripu (kWorldRoundTripEpsilon,
+// kWorldPositionRelTolerance). SetPosition(GetPosition()) i SetRotation(GetRotation())
+// pod obroconym i przeskalowanym rodzicem to no-op, a obrot o 1e-6 rad i ruch
+// o 1e-4 to prawdziwa zmiana. Ziarno stale (powtarzalne w CI), nadpisywalne
 // zmienna srodowiskowa WZ_TEST_SEED. Wojcimierz zyczy sobie powtarzalnosci.
 // -----------------------------------------------------------------------------
 namespace {
@@ -158,7 +159,7 @@ std::uint32_t TestSeed() {
 }
 }  // namespace
 
-TEST(TransformWorldUlps, FixedParentSetSameWorldValueIsNoOp) {
+TEST(TransformWorldRoundTrip, FixedParentSetSameWorldValueIsNoOp) {
     Scene s;
     auto& parent = s.CreateGameObject("P").transform();
     auto& child = s.CreateGameObject("C").transform();
@@ -184,7 +185,7 @@ TEST(TransformWorldUlps, FixedParentSetSameWorldValueIsNoOp) {
     EXPECT_GT(child.GetChangeVersion(), v1) << "obrot o 1e-4 rad musi podbic wersje";
 }
 
-TEST(TransformWorldUlps, LocalSettersStayExact) {
+TEST(TransformWorldRoundTrip, LocalSettersStayExact) {
     // Setery lokalne porownuja dokladnie - mikroruch o 1 ULP nie ginie.
     Scene s;
     auto& t = s.CreateGameObject().transform();
@@ -194,48 +195,94 @@ TEST(TransformWorldUlps, LocalSettersStayExact) {
     EXPECT_GT(t.GetChangeVersion(), v0);
 }
 
-TEST(TransformWorldUlps, RandomHierarchiesSameWorldValueIsNoOp) {
+TEST(TransformWorldRoundTrip, RandomHierarchiesSeparateRoundTripFromMicroRotation) {
+    // Wymaganie testerow (#27): na losowych hierarchiach obrot o 1e-6 rad wokol
+    // losowej osi ZAWSZE podbija wersje (0 polknietych), a SetRotation(GetRotation())
+    // nigdy. Polowa przypadkow ma rodzica i dziadka ze skala (2, 0.5, 3).
     const std::uint32_t seed = TestSeed();
     std::mt19937 rng(seed);
-    std::uniform_real_distribution<float> pos(-5.0f, 5.0f), ang(-180.0f, 180.0f), scl(0.5f, 2.0f);
-    constexpr int kCases = 500;
+    std::uniform_real_distribution<float> pos(-5.0f, 5.0f), ang(-180.0f, 180.0f), scl(0.5f, 2.0f), u(-1.0f, 1.0f);
+    std::uniform_int_distribution<int> axisPick(0, 2);
+    constexpr int kCases = 20000;
+    int noOpBumped = 0, repeatBumped = 0, microSwallowed = 0, rotateSwallowed = 0, moveSwallowed = 0;
+    int firstBad = -1;
+    float worstMicro = 1.0f;
     for (int i = 0; i < kCases; ++i) {
-        SCOPED_TRACE(::testing::Message() << "seed=" << seed << " przypadek=" << i
-                                          << " (powtorz: WZ_TEST_SEED=" << seed << ")");
+        const bool fixedScale = (i % 2) == 0;
         Scene s;
         auto& g = s.CreateGameObject("G").transform();
         auto& p = s.CreateGameObject("P").transform();
         auto& t = s.CreateGameObject("T").transform();
+        auto scale = [&] { return fixedScale ? glm::vec3(2.0f, 0.5f, 3.0f) : glm::vec3(scl(rng), scl(rng), scl(rng)); };
         g.SetLocalPosition({pos(rng), pos(rng), pos(rng)});
         g.SetLocalEulerAngles({ang(rng), ang(rng), ang(rng)});
-        g.SetLocalScale({scl(rng), scl(rng), scl(rng)});
+        g.SetLocalScale(scale());
         p.SetParent(&g, false);
         p.SetLocalPosition({pos(rng), pos(rng), pos(rng)});
         p.SetLocalEulerAngles({ang(rng), ang(rng), ang(rng)});
-        p.SetLocalScale({scl(rng), scl(rng), scl(rng)});
+        p.SetLocalScale(scale());
         t.SetParent(&p, false);
         t.SetLocalPosition({pos(rng), pos(rng), pos(rng)});
         t.SetLocalEulerAngles({ang(rng), ang(rng), ang(rng)});
-
         (void)t.GetLocalToWorldMatrix();
-        const auto v0 = t.GetChangeVersion();
-        t.SetPosition(t.GetPosition());
-        EXPECT_EQ(t.GetChangeVersion(), v0) << "SetPosition(GetPosition())";
-        t.SetRotation(t.GetRotation());
-        EXPECT_EQ(t.GetChangeVersion(), v0) << "SetRotation(GetRotation())";
-        t.SetWorldPoseFromPhysics(t.GetPosition(), t.GetRotation());
-        EXPECT_FALSE(t.IsWorldMatrixDirty()) << "SetWorldPoseFromPhysics(ta sama poza)";
+        bool bad = false;
 
-        t.SetPosition(t.GetPosition() + glm::vec3(0, 1e-4f, 0));
-        EXPECT_GT(t.GetChangeVersion(), v0) << "ruch o 1e-4";
-        const auto v1 = t.GetChangeVersion();
-        t.SetRotation(glm::angleAxis(1e-4f, glm::vec3(1, 0, 0)) * t.GetRotation());
-        EXPECT_GT(t.GetChangeVersion(), v1) << "obrot o 1e-4 rad";
-        if (HasFailure()) break;  // jeden czytelny przypadek zamiast 500 kopii
+        // 1) Ta sama wartosc swiatowa - no-op.
+        auto v = t.GetChangeVersion();
+        t.SetPosition(t.GetPosition());
+        t.SetRotation(t.GetRotation());
+        t.SetWorldPoseFromPhysics(t.GetPosition(), t.GetRotation());
+        t.SetLocalEulerAngles(t.GetLocalEulerAngles());
+        t.Rotate({0, 0, 0});
+        if (t.GetChangeVersion() != v || t.IsWorldMatrixDirty()) { ++noOpBumped; bad = true; }
+
+        // 2) Ponowny zapis tej samej zadanej wartosci (round-trip swiat -> lokal -> swiat).
+        const glm::quat q = glm::normalize(glm::quat(u(rng), u(rng), u(rng), u(rng)));
+        const glm::vec3 w(pos(rng) * 4.0f, pos(rng) * 4.0f, pos(rng) * 4.0f);  // +-20
+        t.SetRotation(q);
+        t.SetPosition(w);
+        v = t.GetChangeVersion();
+        t.SetRotation(q);
+        t.SetPosition(w);
+        t.SetWorldPoseFromPhysics(w, q);
+        if (t.GetChangeVersion() != v) { ++repeatBumped; bad = true; }
+
+        // 3) Celowy obrot o 1e-6 rad wokol losowej osi - zawsze zmiana.
+        const glm::quat before = t.GetRotation();
+        const glm::vec3 axis = glm::normalize(glm::vec3(u(rng), u(rng), u(rng)) + glm::vec3(0, 0, 1e-3f));
+        const glm::quat target = glm::angleAxis(1e-6f, axis) * before;
+        worstMicro = std::min(worstMicro, RotationMaxDelta(glm::normalize(target), before));
+        v = t.GetChangeVersion();
+        t.SetRotation(target);
+        if (t.GetChangeVersion() == v) { ++microSwallowed; bad = true; }
+
+        // 4) Rotate lokalny o 1e-6 rad wokol losowej osi ukladu - tez zmiana.
+        glm::vec3 e(0.0f);
+        e[axisPick(rng)] = glm::degrees(1e-6f);
+        v = t.GetChangeVersion();
+        t.Rotate(e);
+        if (t.GetChangeVersion() == v) { ++rotateSwallowed; bad = true; }
+
+        // 5) Ruch o 1e-4 wzdluz losowej osi swiata - zawsze zmiana.
+        glm::vec3 d(0.0f);
+        d[axisPick(rng)] = (i % 3 == 0) ? -1e-4f : 1e-4f;
+        v = t.GetChangeVersion();
+        t.SetPosition(t.GetPosition() + d);
+        if (t.GetChangeVersion() == v) { ++moveSwallowed; bad = true; }
+
+        if (bad && firstBad < 0) firstBad = i;
     }
+    SCOPED_TRACE(::testing::Message() << "seed=" << seed << " pierwszy zly przypadek=" << firstBad
+                                      << " (powtorz: WZ_TEST_SEED=" << seed << ")");
+    EXPECT_EQ(noOpBumped, 0) << "SetX(GetX()) podbilo wersje";
+    EXPECT_EQ(repeatBumped, 0) << "ponowne SetRotation(q)/SetPosition(p) podbilo wersje";
+    EXPECT_EQ(microSwallowed, 0) << "obrot o 1e-6 rad polkniety; najmniejsza delta=" << worstMicro;
+    EXPECT_EQ(rotateSwallowed, 0) << "Rotate o 1e-6 rad polkniety";
+    EXPECT_EQ(moveSwallowed, 0) << "ruch o 1e-4 polkniety";
+    EXPECT_GT(worstMicro, kWorldRoundTripEpsilon);
 }
 
-TEST(TransformWorldUlps, RotateZeroAfterReparentIsNoOp) {
+TEST(TransformWorldRoundTrip, RotateZeroAfterReparentIsNoOp) {
     // Po SetParent(nullptr, true) obrot pochodzi z dekompozycji macierzy;
     // Rotate(0) i SetLocalRotation(GetLocalRotation()) nadal nie moga nic zmienic.
     Scene s;
