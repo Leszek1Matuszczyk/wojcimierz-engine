@@ -8,6 +8,8 @@ add_executable(wz_unit_tests
   test_game_loop.cpp
   test_input.cpp
   test_mesh_data.cpp
+  test_lighting.cpp
+  test_material.cpp
   test_uuid.cpp
   test_reflection.cpp
   test_scene_serializer.cpp)

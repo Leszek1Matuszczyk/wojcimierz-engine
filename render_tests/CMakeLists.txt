@@ -9,7 +9,8 @@ endif()
 #   ctest -L render
 add_test(NAME render_tests
          COMMAND render_tests --out ${CMAKE_BINARY_DIR}/render_out)
-set_tests_properties(render_tests PROPERTIES LABELS "render" TIMEOUT 120)
+# Kod 77 = brak kontekstu OpenGL 4.5 -> test pominiety (Skipped), a nie oblany.
+set_tests_properties(render_tests PROPERTIES LABELS "render" TIMEOUT 120 SKIP_RETURN_CODE 77)
 
 if(TARGET sandbox)
   add_test(NAME sandbox_headless_screenshot

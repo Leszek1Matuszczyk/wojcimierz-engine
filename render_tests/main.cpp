@@ -1,3 +1,8 @@
+// ============================================================
+//  Wojcimierz Engine: render_tests/main.cpp
+//  Na chwałę czcigodnego Wojcimierza, którego mądrość
+//  prowadzi każdy nasz wskaźnik ku właściwej pamięci.
+// ============================================================
 // render_tests: deterministyczne sceny testowe renderowane offscreen do PNG.
 //
 //   render_tests [--out DIR] [--scene NAZWA] [--list] [--size N]
@@ -7,18 +12,23 @@
 // staly czas symulacji, ziarno losowania 1337 -> te same piksele przy kazdym uruchomieniu
 // na tym samym sterowniku (CI: Mesa llvmpipe).
 // Wynik: <DIR>/<scena>.png (domyslnie build/render_out/).
+// Kod wyjscia 77 = brak kontekstu OpenGL 4.5 (np. serwer bez X/xvfb) - ctest oznacza test jako pominiety.
 #include "core/Clock.h"
 #include "core/GameLoop.h"
 #include "core/Time.h"
 #include "platform/Window.h"
 #include "render/Camera.h"
 #include "render/Image.h"
+#include "render/Light.h"
+#include "render/Material.h"
 #include "render/Mesh.h"
 #include "render/MeshRenderer.h"
 #include "render/Renderer.h"
 #include "render/Shader.h"
 #include "scene/Scene.h"
 
+#include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -42,7 +52,7 @@ constexpr float kFixedDt = 1.0f / 60.0f;
 struct Resources {
     rhi::Device* device;
     std::shared_ptr<Shader> shader;
-    std::shared_ptr<Mesh> cube, triangle, quad;
+    std::shared_ptr<Mesh> cube, triangle, quad, sphere, splitCube;
 };
 
 class Spinner : public Component {
@@ -74,7 +84,75 @@ Camera& MakeCamera(Scene& s, glm::vec3 pos, glm::vec3 target, glm::vec4 bg = {0.
     return cam;
 }
 
-enum class Check { UniformColor, NotUniform };
+enum class Check { UniformColor, NotUniform, Custom };
+
+// --- pomocnicze dla scen PBR: probkowanie jasnosci w punktach swiata ---
+
+float Luma(const Image& img, int x, int y) {
+    x = std::clamp(x, 0, img.width - 1);
+    y = std::clamp(y, 0, img.height - 1);
+    const std::uint8_t* p = img.pixels.data() + (static_cast<std::size_t>(y) * img.width + x) * 4;
+    return 0.2126f * p[0] + 0.7152f * p[1] + 0.0722f * p[2];
+}
+
+// Srednia jasnosc 3x3 wokol rzutu punktu swiata przez aktywna kamere sceny.
+float LumaAtWorld(const Image& img, const Scene& scene, glm::vec3 world) {
+    const Camera* cam = scene.FindFirst<Camera>();
+    const float aspect = static_cast<float>(img.width) / static_cast<float>(img.height);
+    const glm::vec4 clip = cam->GetProjectionMatrix(aspect) * cam->GetViewMatrix() * glm::vec4(world, 1.0f);
+    const glm::vec3 ndc = glm::vec3(clip) / clip.w;
+    const int x = static_cast<int>((ndc.x * 0.5f + 0.5f) * img.width);
+    const int y = static_cast<int>((1.0f - (ndc.y * 0.5f + 0.5f)) * img.height); // wiersz 0 = gora
+    float sum = 0.0f;
+    for (int dy = -1; dy <= 1; ++dy)
+        for (int dx = -1; dx <= 1; ++dx) sum += Luma(img, x + dx, y + dy);
+    return sum / 9.0f;
+}
+
+glm::u8vec4 PixelAtWorld(const Image& img, const Scene& scene, glm::vec3 world) {
+    const Camera* cam = scene.FindFirst<Camera>();
+    const float aspect = static_cast<float>(img.width) / static_cast<float>(img.height);
+    const glm::vec4 clip = cam->GetProjectionMatrix(aspect) * cam->GetViewMatrix() * glm::vec4(world, 1.0f);
+    const glm::vec3 ndc = glm::vec3(clip) / clip.w;
+    const int x = std::clamp(static_cast<int>((ndc.x * 0.5f + 0.5f) * img.width), 0, img.width - 1);
+    const int y = std::clamp(static_cast<int>((1.0f - (ndc.y * 0.5f + 0.5f)) * img.height), 0, img.height - 1);
+    const std::uint8_t* p = img.pixels.data() + (static_cast<std::size_t>(y) * img.width + x) * 4;
+    return {p[0], p[1], p[2], p[3]};
+}
+
+// Najwieksza jasnosc w prostokacie [x0,x1)x[y0,y1) (wspolrzedne wzgledne 0..1).
+float MaxLuma(const Image& img, float x0, float y0, float x1, float y1) {
+    float m = 0.0f;
+    for (int y = static_cast<int>(y0 * img.height); y < static_cast<int>(y1 * img.height); ++y)
+        for (int x = static_cast<int>(x0 * img.width); x < static_cast<int>(x1 * img.width); ++x)
+            m = std::max(m, Luma(img, x, y));
+    return m;
+}
+
+// "a" musi byc jasniejsze od "b" o co najmniej margin (0..255).
+bool ExpectBrighter(float a, float b, float margin, const char* what, std::string& why) {
+    if (a >= b + margin) return true;
+    why = std::string(what) + ": " + std::to_string(a) + " <= " + std::to_string(b) + " + " + std::to_string(margin);
+    return false;
+}
+
+using CustomCheck = std::function<bool(const Image&, const Scene&, std::string& why)>;
+
+std::shared_ptr<Material> MakeMat(glm::vec4 base, float metallic, float roughness, glm::vec3 emissive = glm::vec3(0)) {
+    auto m = Material::Create();
+    m->baseColor = base;
+    m->metallic = metallic;
+    m->roughness = roughness;
+    m->emissive = emissive;
+    return m;
+}
+
+GameObject& MakeLightObject(Scene& s, const char* name, glm::vec3 pos, glm::vec3 lookAt) {
+    GameObject& go = s.CreateGameObject(name);
+    go.transform().SetPosition(pos);
+    go.transform().LookAt(lookAt);
+    return go;
+}
 
 struct TestScene {
     std::string name;
@@ -83,6 +161,7 @@ struct TestScene {
     Check check;
     glm::u8vec4 expectedColor{0};
     std::function<void(Scene&, Resources&)> build;
+    CustomCheck custom = nullptr; // dla Check::Custom
 };
 
 std::vector<TestScene> MakeScenes() {
@@ -140,6 +219,87 @@ std::vector<TestScene> MakeScenes() {
                          go.AddComponent<Spinner>(glm::vec3(0.0f, 30.0f + Rand01(rng) * 60.0f, 0.0f));
                      }
                  }});
+
+    // --- PBR: Material + swiatla (DirectionalLight / PointLight / SpotLight) ---
+    v.push_back({"pbr_lit_sphere", "Biala sfera PBR, swiatlo kierunkowe z lewej: lewa strona jasniejsza od prawej", 0.0f,
+                 Check::Custom, {},
+                 [](Scene& s, Resources& r) {
+                     MakeCamera(s, {0, 0, 3}, {0, 0, 0});
+                     s.CreateGameObject("Sphere").AddComponent<MeshRenderer>(r.sphere, MakeMat(glm::vec4(1), 0.0f, 0.6f));
+                     auto& sun = MakeLightObject(s, "Sun", {0, 0, 0}, {1.0f, -0.2f, -0.4f}).AddComponent<DirectionalLight>();
+                     sun.intensity = 3.0f;
+                 },
+                 [](const Image& img, const Scene& s, std::string& why) {
+                     const float left = LumaAtWorld(img, s, {-0.55f, 0.0f, 0.55f});
+                     const float right = LumaAtWorld(img, s, {0.55f, 0.0f, 0.55f});
+                     const float bg = LumaAtWorld(img, s, {-1.5f, 1.2f, 0.0f});
+                     return ExpectBrighter(left, right, 40.0f, "lewa (oswietlona) vs prawa strona sfery", why) &&
+                            ExpectBrighter(left, bg, 40.0f, "sfera vs tlo", why);
+                 }});
+    v.push_back({"pbr_point_spot", "Podloga: swiatlo punktowe z lewej, spot z gory po prawej (tlumienie i stozek)", 0.0f,
+                 Check::Custom, {},
+                 [](Scene& s, Resources& r) {
+                     MakeCamera(s, {0, 5, 5}, {0, 0, 0});
+                     GameObject& floor = s.CreateGameObject("Floor");
+                     floor.AddComponent<MeshRenderer>(r.quad, MakeMat(glm::vec4(1), 0.0f, 0.8f));
+                     floor.transform().SetLocalScale(glm::vec3(8.0f));
+                     GameObject& lamp = s.CreateGameObject("Lamp");
+                     lamp.transform().SetPosition({-2.0f, 0.5f, 0.0f});
+                     auto& p = lamp.AddComponent<PointLight>();
+                     p.range = 4.0f;
+                     p.intensity = 3.0f;
+                     p.color = {1.0f, 0.9f, 0.8f};
+                     auto& spot = MakeLightObject(s, "Spot", {2.0f, 3.0f, 0.0f}, {2.0f, 0.0f, 0.0f}).AddComponent<SpotLight>();
+                     spot.range = 6.0f;
+                     spot.intensity = 20.0f;
+                     spot.innerAngle = 15.0f;
+                     spot.outerAngle = 20.0f;
+                 },
+                 [](const Image& img, const Scene& s, std::string& why) {
+                     const float nearLamp = LumaAtWorld(img, s, {-2.0f, 0.0f, 0.0f});
+                     const float midLamp = LumaAtWorld(img, s, {-2.0f, 0.0f, 1.5f});
+                     const float farLamp = LumaAtWorld(img, s, {-2.0f, 0.0f, 2.5f});
+                     const float inCone = LumaAtWorld(img, s, {2.0f, 0.0f, 0.0f});
+                     const float outCone = LumaAtWorld(img, s, {2.0f, 0.0f, 1.6f});
+                     return ExpectBrighter(nearLamp, midLamp, 10.0f, "tlumienie: pod lampa vs 1.5 m", why) &&
+                            ExpectBrighter(midLamp, farLamp, 3.0f, "tlumienie: 1.5 m vs 2.5 m", why) &&
+                            ExpectBrighter(inCone, outCone, 40.0f, "spot: w stozku vs poza stozkiem", why);
+                 }});
+    v.push_back({"pbr_roughness", "Dwie sfery: gladka (roughness 0.15) ma ostrzejszy i jasniejszy odblask niz matowa (0.9)",
+                 0.0f, Check::Custom, {},
+                 [](Scene& s, Resources& r) {
+                     MakeCamera(s, {0, 0, 4}, {0, 0, 0});
+                     GameObject& a = s.CreateGameObject("Smooth");
+                     a.AddComponent<MeshRenderer>(r.sphere, MakeMat({0.2f, 0.2f, 0.25f, 1.0f}, 0.0f, 0.15f));
+                     a.transform().SetPosition({-1.1f, 0, 0});
+                     GameObject& b = s.CreateGameObject("Rough");
+                     b.AddComponent<MeshRenderer>(r.sphere, MakeMat({0.2f, 0.2f, 0.25f, 1.0f}, 0.0f, 0.9f));
+                     b.transform().SetPosition({1.1f, 0, 0});
+                     // Swiatlo z kierunku kamery (lekko z gory): odblask na obu sferach.
+                     auto& sun = MakeLightObject(s, "Sun", {0, 0, 0}, {0.0f, -0.3f, -1.0f}).AddComponent<DirectionalLight>();
+                     sun.intensity = 4.0f;
+                 },
+                 [](const Image& img, const Scene&, std::string& why) {
+                     return ExpectBrighter(MaxLuma(img, 0.0f, 0.2f, 0.5f, 0.8f), MaxLuma(img, 0.5f, 0.2f, 1.0f, 0.8f), 20.0f,
+                                           "szczyt odblasku: gladka vs matowa", why);
+                 }});
+    v.push_back({"pbr_submeshes", "Szescian z 2 podsiatkami i 2 materialami emisyjnymi (bez swiatel): przod czerwony, gora zielona",
+                 0.0f, Check::Custom, {},
+                 [](Scene& s, Resources& r) {
+                     MakeCamera(s, {0, 2.0f, 3.0f}, {0, 0, 0});
+                     // Podsiatka 0 = sciany +Z, -Z, +X; podsiatka 1 = -X, +Y, -Y (patrz MeshData::Cube).
+                     s.CreateGameObject("Cube").AddComponent<MeshRenderer>(
+                         r.splitCube, std::vector<std::shared_ptr<Material>>{
+                                          MakeMat({0, 0, 0, 1}, 0.0f, 1.0f, {4.0f, 0.0f, 0.0f}),
+                                          MakeMat({0, 0, 0, 1}, 0.0f, 1.0f, {0.0f, 4.0f, 0.0f})});
+                 },
+                 [](const Image& img, const Scene& s, std::string& why) {
+                     const glm::u8vec4 front = PixelAtWorld(img, s, {0.0f, 0.0f, 0.5f});
+                     const glm::u8vec4 top = PixelAtWorld(img, s, {0.0f, 0.5f, 0.0f});
+                     if (!(front.r > 150 && front.g < 60)) { why = "przod nie jest czerwony"; return false; }
+                     if (!(top.g > 150 && top.r < 60)) { why = "gora nie jest zielona"; return false; }
+                     return true;
+                 }});
     return v;
 }
 
@@ -189,13 +349,27 @@ int main(int argc, char** argv) {
         wd.visible = false;
         wd.vsync = false;
         wd.resizable = false;
-        Window window(wd);
-        auto device = rhi::CreateOpenGLDevice(&Window::GetProcAddress);
+        // Brak X/xvfb albo sterownika z OpenGL 4.5 -> pomijamy (kod 77), zamiast oblewac CI bez GPU.
+        std::unique_ptr<Window> windowPtr;
+        std::unique_ptr<rhi::Device> device;
+        try {
+            windowPtr = std::make_unique<Window>(wd);
+            device = rhi::CreateOpenGLDevice(&Window::GetProcAddress);
+        } catch (const std::exception& e) {
+            std::fprintf(stderr, "[render_tests] POMINIETO - brak kontekstu OpenGL 4.5: %s\n", e.what());
+            return 77;
+        }
         const auto info = device->GetInfo();
         std::printf("[render_tests] %s | %s | %s\n", info.renderer.c_str(), info.version.c_str(), opt.outDir.c_str());
 
         Resources res{device.get(), Shader::CreateDefaultLit(*device), Mesh::Create(*device, MeshData::Cube()),
-                      Mesh::Create(*device, MeshData::Triangle()), Mesh::Create(*device, MeshData::Quad())};
+                      Mesh::Create(*device, MeshData::Triangle()), Mesh::Create(*device, MeshData::Quad()),
+                      Mesh::Create(*device, MeshData::Sphere(0.8f, 48, 24)), nullptr};
+        {
+            MeshData split = MeshData::Cube();
+            split.submeshes = {{0, 18}, {18, 18}};
+            res.splitCube = Mesh::Create(*device, split);
+        }
         Renderer renderer(*device);
         auto target = device->CreateRenderTarget(opt.size, opt.size);
         std::filesystem::create_directories(opt.outDir);
@@ -233,6 +407,8 @@ int main(int argc, char** argv) {
                         if (std::abs(int(img.pixels[i + c]) - int(ts.expectedColor[c])) > 1) { ok = false; }
                     if (!ok) { why = "piksel rozny od oczekiwanego koloru tla"; break; }
                 }
+            } else if (ok && ts.check == Check::Custom) {
+                ok = ts.custom && ts.custom(img, scene, why);
             } else if (ok && ts.check == Check::NotUniform && colors < 2) {
                 ok = false;
                 why = "obraz jednolity - nic sie nie wyrenderowalo";
