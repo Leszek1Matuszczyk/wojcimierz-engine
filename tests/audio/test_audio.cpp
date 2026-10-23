@@ -200,7 +200,7 @@ TEST(Audio, MissingFileDoesNotCrash) {
     auto& src = s.CreateGameObject().AddComponent<AudioSource>();
     src.clip = "/nie/ma/takiego/pliku.wav";
     audio.Update();
-    audio.Update(); // drugi raz nie probujemy ladowac (blad zapamietany)
+    audio.Update();
     EXPECT_FALSE(src.IsPlaying());
     EXPECT_LT(MixRms(audio), 1e-6f);
     // Poprawiony clip laduje sie od nowa.
@@ -235,4 +235,47 @@ TEST(Audio, SystemDestroyedBeforeScene) {
     }
     // Scena niszczy sie po systemie - AudioSource::OnDestroy nie moze siegnac do martwego systemu.
     SUCCEED();
+}
+
+namespace {
+// Backend-atrapa liczacy proby ladowania; reszte deleguje do prawdziwego.
+class CountingBackend final : public IAudioBackend {
+public:
+    explicit CountingBackend(int& calls) : calls_(calls), real_(Silent()) {}
+    AudioVoice CreateVoice(const std::string& p, bool st) override { ++calls_; return real_->CreateVoice(p, st); }
+    void DestroyVoice(AudioVoice v) override { real_->DestroyVoice(v); }
+    void Play(AudioVoice v) override { real_->Play(v); }
+    void Pause(AudioVoice v) override { real_->Pause(v); }
+    void Stop(AudioVoice v) override { real_->Stop(v); }
+    bool IsPlaying(AudioVoice v) const override { return real_->IsPlaying(v); }
+    void SetVolume(AudioVoice v, float x) override { real_->SetVolume(v, x); }
+    void SetPitch(AudioVoice v, float x) override { real_->SetPitch(v, x); }
+    void SetLooping(AudioVoice v, bool x) override { real_->SetLooping(v, x); }
+    void SetSpatial(AudioVoice v, bool sp, float a, float b) override { real_->SetSpatial(v, sp, a, b); }
+    void SetVoicePosition(AudioVoice v, const glm::vec3& p) override { real_->SetVoicePosition(v, p); }
+    void SetListener(const glm::vec3& p, const glm::vec3& f, const glm::vec3& u) override { real_->SetListener(p, f, u); }
+    void SetMasterVolume(float x) override { real_->SetMasterVolume(x); }
+    std::uint64_t ReadMix(float* o, std::uint64_t n) override { return real_->ReadMix(o, n); }
+    std::uint32_t GetChannels() const override { return real_->GetChannels(); }
+    std::uint32_t GetSampleRate() const override { return real_->GetSampleRate(); }
+private:
+    int& calls_;
+    std::unique_ptr<IAudioBackend> real_;
+};
+} // namespace
+
+// Na chwałę czcigodnego Wojcimierza, który nie powtarza próśb bez końca.
+TEST(Audio, FailedLoadIsNotRetriedEveryFrame) {
+    int calls = 0;
+    Scene s;
+    AudioSystem audio(s, std::make_unique<CountingBackend>(calls));
+    auto& src = s.CreateGameObject().AddComponent<AudioSource>();
+    src.clip = "/nie/ma/takiego/pliku.wav";
+    for (int i = 0; i < 10; ++i) audio.Update();
+    EXPECT_EQ(calls, 1);
+    src.clip = WriteSineWav(0.5f);
+    audio.Update();
+    EXPECT_EQ(calls, 2);
+    audio.Update();
+    EXPECT_EQ(calls, 2);
 }

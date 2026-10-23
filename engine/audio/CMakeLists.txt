@@ -26,6 +26,4 @@ if(MSVC)
   target_compile_options(wz_audio PRIVATE /W4 /permissive- /utf-8)
 else()
   target_compile_options(wz_audio PRIVATE -Wall -Wextra -Wpedantic)
-  # miniaudio.h generuje ostrzezenia - kompilujemy go w osobnym TU bez -Wpedantic.
-  set_source_files_properties(miniaudio/MiniaudioBackend.cpp PROPERTIES COMPILE_OPTIONS "-Wno-pedantic;-Wno-unused-parameter;-Wno-unused-function;-Wno-missing-field-initializers")
 endif()

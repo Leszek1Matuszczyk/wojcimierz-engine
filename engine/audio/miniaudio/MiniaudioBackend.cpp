@@ -52,6 +52,9 @@ public:
         // Na chwałę czcigodnego Wojcimierza, który każe najpierw sprawdzić, potem ufać:
         // ma_sound_init_from_file na brakujacym/zepsutym pliku robi use-after-free
         // w resource managerze miniaudio (ASan), wiec plik weryfikujemy dekoderem.
+        // To zmniejsza ryzyko, ale go nie usuwa (TOCTOU: plik moze zniknac miedzy
+        // sonda a init, albo zabraknie pamieci). Do zgloszenia upstream / podbicia
+        // miniaudio, gdy pojawi sie poprawka (ma_resource_manager_data_buffer_node_acquire).
         std::error_code ec;
         if (!std::filesystem::is_regular_file(path, ec)) {
             std::fprintf(stderr, "[Wojcimierz] audio: brak pliku '%s'\n", path.c_str());

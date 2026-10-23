@@ -42,7 +42,10 @@ private:
     AudioVoice voice_ = kInvalidVoice;
     std::string loadedClip_;
     bool loadedStreaming_ = false;
-    bool loadAttempted_ = false; // po porazce nie ladujemy ponownie, dopoki clip sie nie zmieni
+    // Po porazce nie ladujemy ponownie, dopoki clip/streaming sie nie zmieni.
+    // Uwaga (hot-reload): plik dograny pozniej pod ta sama sciezka nie zaladuje sie
+    // sam - trzeba przypisac clip ponownie albo przebudowac komponent.
+    bool loadAttempted_ = false;
     bool awakeHandled_ = false;
 };
 
