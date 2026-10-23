@@ -11,6 +11,7 @@
 #include <nlohmann/json_fwd.hpp>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
@@ -66,11 +67,19 @@ struct LoadResult {
 // są pomijane przy zapisie. Wczytywanie działa w trzech krokach: tworzy obiekty, ustawia
 // hierarchię, a na końcu dołącza komponenty z już ustawionymi polami, więc Awake widzi wczytane
 // wartości i kompletną hierarchię.
+// Nazwa typu C++ niezależna od kompilatora: usuwa prefiksy "class ", "struct ", "enum "
+// (i "union ") dodawane przez MSVC w typeid().name(), także wewnątrz argumentów szablonów,
+// np. "class std::vector<struct a::B>" -> "std::vector<a::B>". Wejście z GCC/Clang
+// (już po demanglingu) przechodzi bez zmian.
+std::string NormalizeTypeName(std::string_view name);
+
 class SceneSerializer {
 public:
-    static nlohmann::json SerializeScene(const Scene& scene);
+    // `warnings` (opcjonalne): dostaje po jednym wpisie na każdy pominięty komponent
+    // bez TypeInfo (obiekt + typ C++). Niezależnie od tego komunikat idzie na stderr.
+    static nlohmann::json SerializeScene(const Scene& scene, std::vector<std::string>* warnings = nullptr);
     // Poddrzewo z `root` włącznie; korzeń zapisany jest z "parent": null.
-    static nlohmann::json SerializeSubtree(const GameObject& root);
+    static nlohmann::json SerializeSubtree(const GameObject& root, std::vector<std::string>* warnings = nullptr);
 
     // Dodaje obiekty z dokumentu do `target` (nie czyści sceny).
     // Bez `remap` obiekty zachowują UUID z pliku, a obiekt o UUID już obecnym w scenie
@@ -78,7 +87,8 @@ public:
     static LoadResult Deserialize(Scene& target, const nlohmann::json& document, IdRemap* remap = nullptr);
 
     // Zapis atomowy (plik tymczasowy + rename). Rzuca SerializationError przy błędzie I/O.
-    static void SaveToFile(const Scene& scene, const std::filesystem::path& path);
+    static void SaveToFile(const Scene& scene, const std::filesystem::path& path,
+                           std::vector<std::string>* warnings = nullptr);
     static LoadResult LoadFromFile(Scene& target, const std::filesystem::path& path, IdRemap* remap = nullptr);
 };
 

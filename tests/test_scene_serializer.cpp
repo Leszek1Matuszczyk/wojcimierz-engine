@@ -489,3 +489,46 @@ TEST(SceneSerializer, WriteFailureMidFileKeepsOriginalAndRemovesTmp) {
     std::filesystem::remove_all(dir);
 #endif
 }
+
+// Nazwa typu w ostrzeżeniu nie może zależeć od kompilatora (MSVC dodaje "class ", "struct "...).
+TEST(SceneSerializer, NormalizeTypeNameStripsMsvcPrefixes) {
+    using wz::NormalizeTypeName;
+    EXPECT_EQ(NormalizeTypeName("class test_serializer::Unreflected"), "test_serializer::Unreflected");
+    EXPECT_EQ(NormalizeTypeName("struct a::B"), "a::B");
+    EXPECT_EQ(NormalizeTypeName("enum a::Mode"), "a::Mode");
+    EXPECT_EQ(NormalizeTypeName("union U"), "U");
+    EXPECT_EQ(NormalizeTypeName("class std::vector<struct a::B,class std::allocator<struct a::B> >"),
+              "std::vector<a::B,std::allocator<a::B> >");
+    EXPECT_EQ(NormalizeTypeName("class gra::Pair<struct a::X, enum b::Y>"), "gra::Pair<a::X, b::Y>");
+    // GCC/Clang po demanglingu: bez zmian.
+    EXPECT_EQ(NormalizeTypeName("test_serializer::Unreflected"), "test_serializer::Unreflected");
+    EXPECT_EQ(NormalizeTypeName("std::vector<int, std::allocator<int> >"), "std::vector<int, std::allocator<int> >");
+    // Słowa, które tylko zawierają prefiks, zostają.
+    EXPECT_EQ(NormalizeTypeName("classy::structure"), "classy::structure");
+    EXPECT_EQ(NormalizeTypeName("my::subclass Foo"), "my::subclass Foo");
+    EXPECT_EQ(NormalizeTypeName(""), "");
+}
+
+// Pominięte komponenty wracają też do wywołującego, nie tylko na stderr.
+TEST(SceneSerializer, SkippedComponentsAreReportedToCaller) {
+    Fixture f;
+    std::vector<std::string> warnings;
+    testing::internal::CaptureStderr();
+    SceneSerializer::SerializeScene(f.scene, &warnings);
+    std::vector<std::string> subtree;
+    SceneSerializer::SerializeSubtree(*f.root, &subtree);
+    const auto dir = std::filesystem::temp_directory_path() / ("wz_serializer_" + UUID::Generate().ToString());
+    std::filesystem::create_directories(dir);
+    std::vector<std::string> saved;
+    SceneSerializer::SaveToFile(f.scene, dir / "s.json", &saved);
+    const std::string err = testing::internal::GetCapturedStderr();
+    std::filesystem::remove_all(dir);
+
+    ASSERT_EQ(warnings.size(), 1u);
+    EXPECT_NE(warnings[0].find("('ChildA')"), std::string::npos) << warnings[0];
+    EXPECT_NE(warnings[0].find("komponent test_serializer::Unreflected nie ma TypeInfo"), std::string::npos)
+        << warnings[0];
+    EXPECT_EQ(subtree, warnings) << "ChildA jest w poddrzewie Root";
+    EXPECT_EQ(saved, warnings);
+    EXPECT_NE(err.find(warnings[0]), std::string::npos) << "stderr zostaje";
+}

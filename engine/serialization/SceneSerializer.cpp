@@ -223,12 +223,12 @@ std::string TypeNameOf(const Component& c) {
 #if defined(__GNUG__)
     int status = 0;
     std::unique_ptr<char, void (*)(void*)> out(abi::__cxa_demangle(raw, nullptr, nullptr, &status), std::free);
-    if (status == 0 && out) return out.get();
+    if (status == 0 && out) return NormalizeTypeName(out.get());
 #endif
-    return raw;
+    return NormalizeTypeName(raw);
 }
 
-json SerializeObject(const GameObject& go, bool writeParent) {
+json SerializeObject(const GameObject& go, bool writeParent, std::vector<std::string>* warnings) {
     json o = json::object();
     // Ścieżka do komunikatów: obiekt (nazwa jako bajty mogą być złe, więc w miejscu błędu id wystarczy).
     const std::string where = "obiekt " + go.GetId().ToString() +
@@ -249,10 +249,10 @@ json SerializeObject(const GameObject& go, bool writeParent) {
             // Komponent bez REFLECT/rejestracji nie trafia do pliku. Nie przerywamy zapisu
             // (to nie jest uszkodzenie danych), ale mówimy o tym głośno, z obiektem i typem.
             // Mądrość Wojcimierza: co ginie w milczeniu, ginie dwa razy.
-            std::fprintf(stderr,
-                         "[wz] SceneSerializer: %s: komponent %s nie ma TypeInfo (brak REFLECT albo rejestracji), "
-                         "nie zostanie zapisany\n",
-                         where.c_str(), TypeNameOf(c).c_str());
+            const std::string msg = where + ": komponent " + TypeNameOf(c) +
+                                    " nie ma TypeInfo (brak REFLECT albo rejestracji), nie zostanie zapisany";
+            std::fprintf(stderr, "[wz] SceneSerializer: %s\n", msg.c_str());
+            if (warnings) warnings->push_back(msg);
             continue;
         }
         comps.push_back(SerializeComponent(c, *info, &c == &go.transform(), where));
@@ -262,10 +262,10 @@ json SerializeObject(const GameObject& go, bool writeParent) {
 }
 
 // Preorder: rodzic przed dziećmi, dzieci w kolejności z hierarchii.
-void AppendSubtree(json& objects, const GameObject& go, bool isSubtreeRoot) {
+void AppendSubtree(json& objects, const GameObject& go, bool isSubtreeRoot, std::vector<std::string>* warnings) {
     if (go.IsPendingDestroy()) return;
-    objects.push_back(SerializeObject(go, !isSubtreeRoot));
-    for (const Transform* child : go.transform().GetChildren()) AppendSubtree(objects, child->gameObject(), false);
+    objects.push_back(SerializeObject(go, !isSubtreeRoot, warnings));
+    for (const Transform* child : go.transform().GetChildren()) AppendSubtree(objects, child->gameObject(), false, warnings);
 }
 
 json MakeDocument(std::string_view name) {
@@ -324,18 +324,41 @@ void ApplyFields(const json& jc, const TypeInfo& info, const IdRemap* remap, con
 
 } // namespace
 
-json SceneSerializer::SerializeScene(const Scene& scene) {
+std::string NormalizeTypeName(std::string_view name) {
+    // Mądrość Wojcimierza: typ nazywamy tak samo na każdym kompilatorze, bo log ma być porównywalny.
+    static constexpr std::string_view kPrefixes[] = {"class ", "struct ", "enum ", "union "};
+    std::string out;
+    out.reserve(name.size());
+    std::size_t i = 0;
+    while (i < name.size()) {
+        // Prefiks liczy się tylko na początku nazwy albo po znaku, który zaczyna nową nazwę typu.
+        const bool atTypeStart = out.empty() || out.back() == '<' || out.back() == ',' || out.back() == ' ' ||
+                                 out.back() == '(';
+        bool stripped = false;
+        if (atTypeStart)
+            for (std::string_view p : kPrefixes)
+                if (name.substr(i, p.size()) == p) {
+                    i += p.size();
+                    stripped = true;
+                    break;
+                }
+        if (!stripped) out.push_back(name[i++]);
+    }
+    return out;
+}
+
+json SceneSerializer::SerializeScene(const Scene& scene, std::vector<std::string>* warnings) {
     json doc = MakeDocument(scene.GetName());
     for (std::size_t i = 0; i < scene.GetGameObjectCount(); ++i) {
         const GameObject& go = scene.GetGameObjectAt(i);
-        if (!go.transform().GetParent()) AppendSubtree(doc["objects"], go, false);
+        if (!go.transform().GetParent()) AppendSubtree(doc["objects"], go, false, warnings);
     }
     return doc;
 }
 
-json SceneSerializer::SerializeSubtree(const GameObject& root) {
+json SceneSerializer::SerializeSubtree(const GameObject& root, std::vector<std::string>* warnings) {
     json doc = MakeDocument(root.GetName());
-    AppendSubtree(doc["objects"], root, true);
+    AppendSubtree(doc["objects"], root, true, warnings);
     return doc;
 }
 
@@ -535,10 +558,11 @@ void SyncParentDirectory(const std::filesystem::path& path) {
 
 } // namespace
 
-void SceneSerializer::SaveToFile(const Scene& scene, const std::filesystem::path& path) {
+void SceneSerializer::SaveToFile(const Scene& scene, const std::filesystem::path& path,
+                                 std::vector<std::string>* warnings) {
     std::string text;
     try {
-        text = SerializeScene(scene).dump(2) + "\n";
+        text = SerializeScene(scene, warnings).dump(2) + "\n";
     } catch (const json::exception& e) { // ostatnia linia obrony: żaden wyjątek nlohmann nie wycieka
         throw SerializationError(std::string("Blad kodowania JSON: ") + e.what());
     }
