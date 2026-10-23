@@ -6,6 +6,8 @@
 #pragma once
 #include "render/RHI.h"
 
+#include <vector>
+
 #include <unordered_map>
 
 namespace wz::rhi::gl {
@@ -27,11 +29,13 @@ public:
     void DestroyShader(ShaderHandle) override;
     VertexInputHandle CreateVertexInput(BufferHandle vb, BufferHandle ib, const VertexLayout& layout) override;
     void DestroyVertexInput(VertexInputHandle) override;
-    using Device::CreateRenderTarget;
-    RenderTargetHandle CreateRenderTarget(const RenderTargetDesc& desc) override;
+    RenderTargetHandle CreateRenderTarget(int width, int height) override;
     void DestroyRenderTarget(RenderTargetHandle) override;
     TextureHandle GetColorTexture(RenderTargetHandle) const override;
     void* GetImGuiTextureId(RenderTargetHandle) const override;
+    void BeginUiPass() override;
+    void EndUiPass() override;
+    bool IsFramebufferSrgbEnabled() const override;
 
     void BeginPass(RenderTargetHandle target, int width, int height, const glm::vec4& clearColor) override;
     void EndPass() override;
@@ -47,21 +51,21 @@ public:
     void DrawIndexedRange(VertexInputHandle, std::uint32_t firstIndex, std::uint32_t indexCount) override;
     std::vector<std::uint8_t> ReadPixels(RenderTargetHandle target, int width, int height) override;
     void Finish() override;
+    bool IsDefaultFramebufferSRGB() const override { return defaultSRGB_; }
+    void BlitToDefault(RenderTargetHandle source, int srcWidth, int srcHeight, int dstWidth, int dstHeight) override;
 
 private:
-    struct RenderTarget {
-        unsigned fbo = 0, color = 0, depth = 0;
-        int w = 0, h = 0;
-        bool srgb = false;
-        // Widok RGBA8 koloru sRGB dla ImGui - tworzony leniwie w GetImGuiTextureId (stad mutable).
-        mutable unsigned imguiView = 0;
-    };
+    // color: GL_SRGB8_ALPHA8; rawView: widok GL_RGBA8 (UNORM) tej samej pamieci - surowe bajty sRGB
+    // (ImGui, odczyt); rawFbo: FBO z rawView - do odczytu i blitu bez konwersji sRGB<->liniowe.
+    struct RenderTarget { unsigned fbo = 0, color = 0, depth = 0, rawView = 0, rawFbo = 0; int w = 0, h = 0; };
     static void DeleteTargetObjects(const RenderTarget& rt);
+    std::vector<bool> uiPassSrgbStack_; // stan GL_FRAMEBUFFER_SRGB sprzed kazdego BeginUiPass
     int Location(ShaderHandle s, const char* name);
 
     std::unordered_map<std::uint32_t, RenderTarget> targets_;
     std::unordered_map<std::uint32_t, std::unordered_map<std::string, int>> uniformCache_;
     std::uint32_t nextTargetId_ = 1;
+    bool defaultSRGB_ = false;
 };
 
 } // namespace wz::rhi::gl

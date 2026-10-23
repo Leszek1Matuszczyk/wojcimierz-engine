@@ -180,8 +180,9 @@ void main() {
     color += u_AmbientColor.rgb * albedo * (1.0 - 0.5 * metallic);
     color += u_Emissive;
 
-    color = color / (color + vec3(1.0));     // Reinhard
-    color = pow(color, vec3(1.0 / 2.2));     // liniowo -> sRGB (cel RGBA8)
+    color = color / (color + vec3(1.0));     // Reinhard (nadal przestrzen liniowa)
+    // Bez recznej gammy: cel jest GL_SRGB8_ALPHA8 z GL_FRAMEBUFFER_SRGB - sprzet koduje do sRGB
+    // dokladnie raz przy zapisie. Wojcimierz liczy swiatlo liniowo, a ekran widzi je raz.
     o_Color = vec4(color, base.a);
 }
 )";

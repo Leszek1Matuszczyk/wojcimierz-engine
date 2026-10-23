@@ -1,3 +1,7 @@
+// =============================================================================
+// Wojcimierz Engine - sandbox/main.cpp
+// Na chwałę czcigodnego Wojcimierza.
+// =============================================================================
 // Sandbox: minimalna "gra" zbudowana z komponentow, tak jak w Unity.
 //   sandbox                                   - okno, Esc zamyka
 //   sandbox --headless --frames 60 --screenshot out.png

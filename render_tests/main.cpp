@@ -168,7 +168,9 @@ struct TestScene {
 
 std::vector<TestScene> MakeScenes() {
     std::vector<TestScene> v;
-    v.push_back({"clear_color", "Tylko kamera, kolor tla (0.2, 0.4, 0.8)", 0.0f, Check::UniformColor, {51, 102, 204, 255},
+    v.push_back({"clear_color", "Tylko kamera, kolor tla (0.2, 0.4, 0.8)", 0.0f, Check::UniformColor,
+                 // Kolor kamery jest liniowy; bufor sRGB koduje go: (0.2, 0.4, 0.8) -> (124, 170, 231).
+                 {LinearToSRGB8(0.2f), LinearToSRGB8(0.4f), LinearToSRGB8(0.8f), 255},
                  [](Scene& s, Resources&) { MakeCamera(s, {0, 0, 3}, {0, 0, 0}, {0.2f, 0.4f, 0.8f, 1.0f}); }});
     v.push_back({"triangle", "Kolorowy trojkat RGB (unlit) na srodku", 0.0f, Check::NotUniform, {},
                  [](Scene& s, Resources& r) {
@@ -300,6 +302,26 @@ std::vector<TestScene> MakeScenes() {
                      const glm::u8vec4 top = PixelAtWorld(img, s, {0.0f, 0.5f, 0.0f});
                      if (!(front.r > 150 && front.g < 60)) { why = "przod nie jest czerwony"; return false; }
                      if (!(top.g > 150 && top.r < 60)) { why = "gora nie jest zielona"; return false; }
+                     // B1: shader oddaje wartosc liniowa (Reinhard 4/(4+1) = 0.8), sRGB koduje cel raz:
+                     // ~231. Reczna gamma w shaderze dalaby podwojne kodowanie (~243).
+                     const float lin = 4.0f / (4.0f + 1.0f);
+                     const float enc = lin <= 0.0031308f ? 12.92f * lin : 1.055f * std::pow(lin, 1.0f / 2.4f) - 0.055f;
+                     const int expected = static_cast<int>(enc * 255.0f + 0.5f);
+                     if (std::abs(int(front.r) - expected) > 3 || std::abs(int(top.g) - expected) > 3) {
+                         why = "emisja zakodowana nie raz: przod.r=" + std::to_string(front.r) + " gora.g=" +
+                               std::to_string(top.g) + ", oczekiwane ~" + std::to_string(expected);
+                         return false;
+                     }
+                     // B2: tlo (clear) i obiekty w tej samej klatce ida ta sama sciezka (cel sRGB +
+                     // GL_FRAMEBUFFER_SRGB) - kolor tla kamery tez zakodowany dokladnie raz.
+                     const glm::vec4 bgLin = s.FindFirst<Camera>()->backgroundColor;
+                     const std::uint8_t* corner = img.pixels.data();
+                     for (int c = 0; c < 3; ++c)
+                         if (std::abs(int(corner[c]) - int(LinearToSRGB8(bgLin[c]))) > 2) {
+                             why = "tlo nie jest zakodowane raz (kanal " + std::to_string(c) + "=" +
+                                   std::to_string(corner[c]) + ")";
+                             return false;
+                         }
                      return true;
                  }});
 
@@ -389,12 +411,23 @@ std::vector<TestScene> MakeScenes() {
     return v;
 }
 
-// --- test RHI: widok RGBA8 koloru sRGB dla ImGui (GetImGuiTextureId) ---
-// Po feat/core-ci kolor celow to GL_SRGB8_ALPHA8, a ImGui rysuje z wylaczonym GL_FRAMEBUFFER_SRGB.
-// Probkowanie samej tekstury sRGB dekodowaloby bajty do liniowych (viewport za ciemny),
-// wiec GetImGuiTextureId musi zwrocic widok, ktory oddaje SUROWE bajty sRGB.
-// Wojcimierz nie toleruje viewportu ciemniejszego niz scena - sprawdzamy to bajt po bajcie.
+// --- test RHI: viewport ImGui zakodowany do sRGB DOKLADNIE RAZ (GetImGuiTextureId + BeginUiPass) ---
+// Kolor celow to GL_SRGB8_ALPHA8, a GL_FRAMEBUFFER_SRGB jest wlaczone globalnie (scena: liniowo ->
+// sRGB przy zapisie). Schemat B3 (wspolny z backendem edytora #12): GetImGuiTextureId zwraca widok
+// UNORM RGBA8 (surowe bajty sRGB), a pass ImGui wylacza GL_FRAMEBUFFER_SRGB i przywraca stan po sobie.
+// Wtedy bajty sceny trafiaja na ekran 1:1. Wojcimierz nie toleruje viewportu jasniejszego ani
+// ciemniejszego niz scena - sprawdzamy to bajt po bajcie.
 const char* kSrgbViewTestName = "srgb_imgui_view";
+
+int LinearToSrgbByte(float x) {
+    const float s = x <= 0.0031308f ? 12.92f * x : 1.055f * std::pow(x, 1.0f / 2.4f) - 0.055f;
+    return static_cast<int>(s * 255.0f + 0.5f);
+}
+int SrgbByteToLinearByte(int b) {
+    const float s = b / 255.0f;
+    const float lin = s <= 0.04045f ? s / 12.92f : std::pow((s + 0.055f) / 1.055f, 2.4f);
+    return static_cast<int>(lin * 255.0f + 0.5f);
+}
 
 bool RunSrgbViewTest(rhi::Device& dev, const Resources& res, std::string& why) {
     constexpr int N = 16;
@@ -412,9 +445,8 @@ layout(binding = 0) uniform sampler2D u_Tex;
 out vec4 o_Color;
 void main() { o_Color = texelFetch(u_Tex, ivec2(gl_FragCoord.xy), 0); })";
 
-    const auto srgbRt = dev.CreateRenderTarget(rhi::RenderTargetDesc{N, N, true});
-    const auto plainRt = dev.CreateRenderTarget(rhi::RenderTargetDesc{N, N, false});
-    const auto outRt = dev.CreateRenderTarget(N, N);
+    const auto sceneRt = dev.CreateRenderTarget(N, N);
+    const auto outRt = dev.CreateRenderTarget(N, N); // "ekran" edytora (tez sRGB - jedna sciezka)
     const auto solid = dev.CreateShader(kVs, kSolidFs);
     const auto blit = dev.CreateShader(kVs, kBlitFs);
     const auto vi = res.triangle->GetVertexInput();
@@ -433,7 +465,7 @@ void main() { o_Color = texelFetch(u_Tex, ivec2(gl_FragCoord.xy), 0); })";
     };
     auto center = [&](rhi::RenderTargetHandle rt) {
         dev.Finish();
-        const auto px = dev.ReadPixels(rt, N, N);
+        const auto px = dev.ReadPixels(rt, N, N); // surowe bajty (bez dekodowania sRGB)
         const std::size_t i = (static_cast<std::size_t>(N / 2) * N + N / 2) * 4;
         return glm::ivec4(px[i], px[i + 1], px[i + 2], px[i + 3]);
     };
@@ -448,41 +480,57 @@ void main() { o_Color = texelFetch(u_Tex, ivec2(gl_FragCoord.xy), 0); })";
 
     bool ok = true;
     auto fail = [&](const std::string& m) { if (ok) why = m; ok = false; };
+    const glm::vec4 linear(0.5f, 0.25f, 0.75f, 1.0f);
 
-    // 1. Render do celu sRGB; surowe bajty bierzemy z ReadPixels (glReadPixels nie dekoduje sRGB),
-    //    wiec test dziala zarowno przed, jak i po wlaczeniu GL_FRAMEBUFFER_SRGB w feat/core-ci.
-    draw(srgbRt, solid, [&] { dev.SetUniform(solid, "u_Color", glm::vec4(0.5f, 0.25f, 0.75f, 1.0f)); });
-    const glm::ivec4 raw = center(srgbRt);
-
-    // 2. Identyfikatory: sRGB -> widok (rozny od koloru, w cache), RGBA8 -> sama tekstura koloru.
-    const std::uint32_t view = idOf(dev.GetImGuiTextureId(srgbRt));
-    const std::uint32_t srgbColor = dev.GetColorTexture(srgbRt).id;
-    if (view == 0 || view == srgbColor) fail("GetImGuiTextureId(sRGB) nie zwraca osobnego widoku");
-    if (idOf(dev.GetImGuiTextureId(srgbRt)) != view) fail("widok sRGB nie jest cachowany");
-    if (idOf(dev.GetImGuiTextureId(plainRt)) != dev.GetColorTexture(plainRt).id)
-        fail("GetImGuiTextureId(RGBA8) powinno zwracac teksture koloru");
-
-    // 3. Probkowanie widoku = surowe bajty sRGB (to zobaczy ImGui).
-    const glm::ivec4 viaView = blitFrom(view);
+    // 1. Scena: shader oddaje wartosci liniowe, zapis koduje do sRGB raz (sprzetowo).
+    if (!dev.IsFramebufferSrgbEnabled()) fail("GL_FRAMEBUFFER_SRGB powinno byc wlaczone dla sceny");
+    draw(sceneRt, solid, [&] { dev.SetUniform(solid, "u_Color", linear); });
+    const glm::ivec4 raw = center(sceneRt);
     for (int c = 0; c < 3; ++c)
-        if (std::abs(viaView[c] - raw[c]) > 1) fail("widok " + fmt(viaView) + " != surowe bajty sRGB " + fmt(raw));
+        if (std::abs(raw[c] - LinearToSrgbByte(linear[c])) > 1)
+            fail("scena " + fmt(raw) + " nie jest zakodowana do sRGB dokladnie raz");
 
-    // 4. Kontrola: sama tekstura sRGB dekoduje do liniowych - wyraznie ciemniej (stad potrzeba widoku).
-    const glm::ivec4 viaColor = blitFrom(srgbColor);
-    for (int c = 0; c < 3; ++c) {
-        const float s = raw[c] / 255.0f;
-        const float lin = s <= 0.04045f ? s / 12.92f : std::pow((s + 0.055f) / 1.055f, 2.4f);
-        if (std::abs(viaColor[c] - static_cast<int>(lin * 255.0f + 0.5f)) > 2)
-            fail("tekstura sRGB " + fmt(viaColor) + " nie dekoduje sie do liniowych (surowe " + fmt(raw) + ")");
+    // 2. Identyfikator ImGui: widok UNORM (rozny od tekstury sRGB), staly miedzy wywolaniami.
+    const std::uint32_t view = idOf(dev.GetImGuiTextureId(sceneRt));
+    const std::uint32_t srgbColor = dev.GetColorTexture(sceneRt).id;
+    if (view == 0 || view == srgbColor) fail("GetImGuiTextureId nie zwraca osobnego widoku UNORM");
+    if (idOf(dev.GetImGuiTextureId(sceneRt)) != view) fail("widok ImGui nie jest staly");
+
+    // 3. Pass ImGui: kodowanie wylaczone -> bajty sceny 1:1 (zakodowane dokladnie raz).
+    glm::ivec4 viaUi, decoded;
+    {
+        rhi::ScopedUiPass ui(dev);
+        if (dev.IsFramebufferSrgbEnabled()) fail("BeginUiPass nie wylaczyl GL_FRAMEBUFFER_SRGB");
+        viaUi = blitFrom(view);
+        // Kontrola: sama tekstura sRGB dekoduje do liniowych - viewport bylby za ciemny.
+        decoded = blitFrom(srgbColor);
     }
-    if (ok && viaColor.r >= viaView.r) fail("dekodowana tekstura nie jest ciemniejsza od widoku");
-    if (ok) why = "surowe " + fmt(raw) + " widok " + fmt(viaView) + " tekstura sRGB " + fmt(viaColor);
+    if (!dev.IsFramebufferSrgbEnabled()) fail("EndUiPass nie przywrocil GL_FRAMEBUFFER_SRGB");
+    for (int c = 0; c < 3; ++c) {
+        if (std::abs(viaUi[c] - raw[c]) > 1) fail("viewport ImGui " + fmt(viaUi) + " != bajty sceny " + fmt(raw));
+        if (std::abs(decoded[c] - SrgbByteToLinearByte(raw[c])) > 2)
+            fail("tekstura sRGB " + fmt(decoded) + " nie dekoduje sie do liniowych (surowe " + fmt(raw) + ")");
+    }
 
-    // 5. Zniszczenie targetu usuwa tez widok (brak bledu GL i wyciekow; DestroyRenderTarget idempotentny).
+    // 4. Kontrola odwrotna: widok UNORM BEZ passu UI -> drugie kodowanie (za jasno). Dlatego pass UI.
+    const glm::ivec4 twice = blitFrom(view);
+    if (ok && twice.r <= viaUi.r) fail("bez BeginUiPass widok powinien byc zakodowany drugi raz (jasniej)");
+
+    // 5. Zagniezdzanie: przywracany jest stan sprzed DANEGO BeginUiPass.
+    dev.BeginUiPass();
+    dev.BeginUiPass();
+    dev.EndUiPass();
+    if (dev.IsFramebufferSrgbEnabled()) fail("zagniezdzony EndUiPass wlaczyl kodowanie za wczesnie");
+    dev.EndUiPass();
+    if (!dev.IsFramebufferSrgbEnabled()) fail("zewnetrzny EndUiPass nie przywrocil kodowania");
+
+    if (ok)
+        why = "scena " + fmt(raw) + " ImGui " + fmt(viaUi) + " (raz), bez passu UI " + fmt(twice) +
+              " (dwa razy), tekstura sRGB " + fmt(decoded);
+
     dev.DestroyShader(solid);
     dev.DestroyShader(blit);
-    dev.DestroyRenderTarget(srgbRt);
-    dev.DestroyRenderTarget(plainRt);
+    dev.DestroyRenderTarget(sceneRt);
     dev.DestroyRenderTarget(outRt);
     dev.Finish();
     return ok;
@@ -497,6 +545,22 @@ struct Options {
     double maxDiffRatio = 0.001;
     bool list = false;
 };
+
+// ============================================================================
+// HOOK DLA KOMPARATORA TESTERA (golden images)
+// ----------------------------------------------------------------------------
+// compareWithGolden() jest JEDYNYM miejscem, przez ktore przechodzi ocena
+// kazdej sceny. Obecnie robi tylko podstawowy sanity-check (oczekiwany kolor
+// tla / obraz niejednolity) oraz - opcjonalnie, z --reference DIR - proste
+// porownanie z wzorcem. Tu wpina sie komparator zespolu testow (np. zapis
+// <scena>_diff.png do render_out/, tolerancje per scena, raport JSON).
+// ============================================================================
+struct GoldenResult {
+    bool ok = true;
+    std::string message;
+};
+
+GoldenResult compareWithGolden(const TestScene& ts, const Image& img, const Options& opt);
 
 bool Parse(int argc, char** argv, Options& o) {
     for (int i = 1; i < argc; ++i) {
@@ -515,6 +579,36 @@ bool Parse(int argc, char** argv, Options& o) {
     return o.size > 0;
 }
 
+
+GoldenResult compareWithGolden(const TestScene& ts, const Image& img, const Options& opt) {
+    GoldenResult r;
+    // 1) Sanity-check zalezny od sceny.
+    if (ts.check == Check::UniformColor) {
+        for (std::size_t i = 0; i < img.pixels.size(); i += 4)
+            for (int c = 0; c < 4; ++c)
+                if (std::abs(int(img.pixels[i + c]) - int(ts.expectedColor[c])) > 2) // +-2/255
+                    return {false, "piksel rozny od oczekiwanego koloru tla"};
+    } else if (ts.check == Check::NotUniform && img.CountUniqueColors() < 2) {
+        return {false, "obraz jednolity - nic sie nie wyrenderowalo"};
+    }
+    // 2) Opcjonalne porownanie z wzorcem (--reference DIR).
+    if (!opt.referenceDir.empty()) {
+        const std::string refPath = (std::filesystem::path(opt.referenceDir) / (ts.name + ".png")).string();
+        Image ref;
+        if (!Image::LoadPNG(refPath, ref)) {
+            std::printf("  (brak wzorca %s - pomijam porownanie)\n", refPath.c_str());
+            return r;
+        }
+        const ImageDiff d = CompareImages(img, ref, opt.threshold);
+        if (d.sizeMismatch) return {false, "inny rozmiar niz wzorzec"};
+        if (d.differingRatio > opt.maxDiffRatio)
+            return {false, "rozni sie od wzorca: " + std::to_string(d.differingPixels) + " px (" +
+                               std::to_string(d.differingRatio * 100.0) + "%)"};
+    }
+    // TODO(tester): komparator golden images (diff PNG, raport) - tutaj.
+    return r;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -523,7 +617,7 @@ int main(int argc, char** argv) {
     auto scenes = MakeScenes();
     if (opt.list) {
         for (auto& s : scenes) std::printf("%-14s t=%.3fs  %s\n", s.name.c_str(), s.simulateSeconds, s.description.c_str());
-        std::printf("%-14s test RHI: GetImGuiTextureId zwraca widok RGBA8 koloru sRGB\n", kSrgbViewTestName);
+        std::printf("%-14s test RHI: viewport ImGui zakodowany do sRGB dokladnie raz\n", kSrgbViewTestName);
         return 0;
     }
 
@@ -570,7 +664,7 @@ int main(int argc, char** argv) {
 
             // Symulacja: staly krok, ManualClock - zero zaleznosci od prawdziwego czasu.
             ManualClock clock;
-            GameLoop loop(GameLoop::Settings{kFixedDt, 1.0f / 3.0f});
+            GameLoop loop(GameLoop::Settings{kFixedDt, 0.25f});
             loop.SetClock(&clock);
             loop.SetCallbacks({[&](float dt) { scene.FixedUpdate(dt); }, [&](float dt) { scene.Update(dt); },
                                [&](float dt) { scene.LateUpdate(dt); }, nullptr});
@@ -587,33 +681,14 @@ int main(int argc, char** argv) {
             std::string why = ok ? "" : "zapis PNG";
 
             const std::size_t colors = img.CountUniqueColors();
-            if (ok && ts.check == Check::UniformColor) {
-                for (std::size_t i = 0; i < img.pixels.size(); i += 4) {
-                    for (int c = 0; c < 4; ++c)
-                        if (std::abs(int(img.pixels[i + c]) - int(ts.expectedColor[c])) > 1) { ok = false; }
-                    if (!ok) { why = "piksel rozny od oczekiwanego koloru tla"; break; }
-                }
-            } else if (ok && ts.check == Check::Custom) {
+            if (ok && ts.check == Check::Custom) {
+                // Sceny z wlasna kontrola (PBR) - potrzebuja sceny, wiec oceniane tutaj.
                 ok = ts.custom && ts.custom(img, scene, why);
-            } else if (ok && ts.check == Check::NotUniform && colors < 2) {
-                ok = false;
-                why = "obraz jednolity - nic sie nie wyrenderowalo";
             }
-
-            if (ok && !opt.referenceDir.empty()) {
-                const std::string refPath = (std::filesystem::path(opt.referenceDir) / (ts.name + ".png")).string();
-                Image ref;
-                if (Image::LoadPNG(refPath, ref)) {
-                    const ImageDiff d = CompareImages(img, ref, opt.threshold);
-                    if (d.sizeMismatch) { ok = false; why = "inny rozmiar niz wzorzec"; }
-                    else if (d.differingRatio > opt.maxDiffRatio) {
-                        ok = false;
-                        why = "rozni sie od wzorca: " + std::to_string(d.differingPixels) + " px (" +
-                              std::to_string(d.differingRatio * 100.0) + "%)";
-                    }
-                } else {
-                    std::printf("  (brak wzorca %s - pomijam porownanie)\n", refPath.c_str());
-                }
+            if (ok) {
+                const GoldenResult g = compareWithGolden(ts, img, opt);
+                ok = g.ok;
+                why = g.message;
             }
 
             std::printf("[%s] %-14s %dx%d t=%.3fs klatek=%d krokow_fixed=%llu kolorow=%zu -> %s %s\n", ok ? " OK " : "FAIL",

@@ -1,3 +1,7 @@
+// =============================================================================
+// Wojcimierz Engine - engine/core/Time.h
+// Na chwałę czcigodnego Wojcimierza.
+// =============================================================================
 #pragma once
 #include <cstdint>
 
@@ -9,7 +13,8 @@ struct Time {
     static inline double unscaledTime = 0.0;    // czas bez timeScale [s]
     static inline float deltaTime = 0.0f;       // czas ostatniej klatki [s] (w FixedUpdate = fixedDeltaTime)
     static inline float unscaledDeltaTime = 0.0f;
-    static inline float fixedDeltaTime = 1.0f / 60.0f;
+    static inline double fixedDeltaTime = 1.0 / 60.0;  // krok staly [s] (double - bez dryfu fixedTime)
+    static inline double maximumDeltaTime = 0.25;      // limit czasu klatki [s] (Unity: Time.maximumDeltaTime)
     static inline float timeScale = 1.0f;
     static inline double fixedTime = 0.0;       // czas symulacji fizyki [s]
     static inline std::uint64_t frameCount = 0;
