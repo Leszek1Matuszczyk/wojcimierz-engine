@@ -31,7 +31,7 @@ public:
     IAudioBackend& GetBackend() const { return *backend_; }
 
     void Update();
-    void SetMasterVolume(float v) { backend_->SetMasterVolume(v); }
+    void SetMasterVolume(float v); // NaN/inf odrzucane, ujemne -> 0
 
 private:
     friend class AudioSource;

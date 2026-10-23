@@ -18,7 +18,7 @@ class AudioSystem;
 class AudioSource final : public Component {
 public:
     std::string clip;          // sciezka do pliku (pozniej: GUID assetu)
-    float volume = 1.0f;
+    float volume = 1.0f;       // przycinane do [0, 1]; NaN/inf -> 1
     float pitch = 1.0f;
     bool loop = false;
     bool playOnAwake = true;   // start przy pierwszym pojawieniu sie w AudioSystem
@@ -47,6 +47,7 @@ private:
     // sam - trzeba przypisac clip ponownie albo przebudowac komponent.
     bool loadAttempted_ = false;
     bool awakeHandled_ = false;
+    bool wasDisabled_ = false; // po ponownej aktywacji playOnAwake gra znowu (Unity: OnEnable)
 };
 
 // Odpowiednik UnityEngine.AudioListener ("uszy" - zwykle na kamerze).

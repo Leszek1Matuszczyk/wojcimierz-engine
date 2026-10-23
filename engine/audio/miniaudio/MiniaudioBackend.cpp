@@ -12,6 +12,7 @@
 #include <miniaudio.h>
 
 #include "audio/IAudioBackend.h"
+#include "audio/detail/Finite.h"
 
 #include <cstdio>
 #include <filesystem>
@@ -102,8 +103,12 @@ public:
         return it != voices_.end() && ma_sound_is_playing(it->second.get());
     }
 
-    void SetVolume(AudioVoice v, float vol) override { if (ma_sound* s = Get(v)) ma_sound_set_volume(s, vol); }
-    void SetPitch(AudioVoice v, float p) override { if (ma_sound* s = Get(v)) ma_sound_set_pitch(s, p); }
+    void SetVolume(AudioVoice v, float vol) override {
+        if (ma_sound* s = Get(v); s && audio_detail::IsFinite(vol)) ma_sound_set_volume(s, vol);
+    }
+    void SetPitch(AudioVoice v, float p) override {
+        if (ma_sound* s = Get(v); s && audio_detail::IsFinite(p) && p > 0.0f) ma_sound_set_pitch(s, p);
+    }
     void SetLooping(AudioVoice v, bool loop) override { if (ma_sound* s = Get(v)) ma_sound_set_looping(s, loop); }
     void SetSpatial(AudioVoice v, bool spatial, float minD, float maxD) override {
         if (ma_sound* s = Get(v)) {
@@ -122,7 +127,9 @@ public:
         ma_engine_listener_set_direction(&engine_, 0, f.x, f.y, f.z);
         ma_engine_listener_set_world_up(&engine_, 0, u.x, u.y, u.z);
     }
-    void SetMasterVolume(float vol) override { if (ok_) ma_engine_set_volume(&engine_, vol); }
+    void SetMasterVolume(float vol) override {
+        if (ok_ && audio_detail::IsFinite(vol)) ma_engine_set_volume(&engine_, vol);
+    }
 
     std::uint64_t ReadMix(float* out, std::uint64_t frames) override {
         if (!ok_) return 0;

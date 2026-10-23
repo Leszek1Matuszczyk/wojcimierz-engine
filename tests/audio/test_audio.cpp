@@ -9,6 +9,7 @@
 #include "scene/Scene.h"
 
 #include <cmath>
+#include <limits>
 #include <cstdint>
 #include <cstdio>
 #include <filesystem>
@@ -278,4 +279,78 @@ TEST(Audio, FailedLoadIsNotRetriedEveryFrame) {
     EXPECT_EQ(calls, 2);
     audio.Update();
     EXPECT_EQ(calls, 2);
+}
+
+// Werdykt testerow #9: NaN/inf nie moze zatruc miksu. Na chwałę czcigodnego Wojcimierza.
+TEST(Audio, NonFiniteParamsDoNotPoisonMix) {
+    const auto wav = WriteSineWav(1.0f);
+    const float nan = std::numeric_limits<float>::quiet_NaN();
+    const float inf = std::numeric_limits<float>::infinity();
+    Scene s;
+    AudioSystem audio(s, Silent());
+    s.CreateGameObject("Camera").AddComponent<AudioListener>();
+    auto& go = s.CreateGameObject();
+    go.transform().SetPosition({0, 0, -1});
+    auto& src = go.AddComponent<AudioSource>();
+    src.clip = wav;
+    src.volume = nan;
+    src.pitch = inf;
+    src.minDistance = nan;
+    src.maxDistance = -inf;
+    audio.SetMasterVolume(nan);
+    audio.SetMasterVolume(inf);
+    audio.Update();
+    std::vector<float> buf(4800 * audio.GetBackend().GetChannels());
+    audio.GetBackend().ReadMix(buf.data(), 4800);
+    bool allFinite = true, anyNonZero = false;
+    for (float x : buf) { allFinite &= std::isfinite(x); anyNonZero |= x != 0.0f; }
+    EXPECT_TRUE(allFinite);
+    EXPECT_TRUE(anyNonZero);
+}
+
+TEST(Audio, VolumeIsClampedToUnit) {
+    const auto wav = WriteSineWav(1.0f);
+    Scene s;
+    AudioSystem audio(s, Silent());
+    auto& src = s.CreateGameObject().AddComponent<AudioSource>();
+    src.clip = wav;
+    src.spatial = false;
+    audio.Update();
+    const float one = MixRms(audio);
+    src.volume = 10.0f;
+    audio.Update();
+    EXPECT_NEAR(MixRms(audio), one, one * 0.02f);
+    src.volume = -3.0f;
+    audio.Update();
+    EXPECT_LT(MixRms(audio), 1e-6f);
+}
+
+TEST(Audio, PlayWithEmptyClipIsNotPlaying) {
+    Scene s;
+    AudioSystem audio(s, Silent());
+    auto& src = s.CreateGameObject().AddComponent<AudioSource>();
+    src.Play();
+    EXPECT_FALSE(src.IsPlaying());
+    audio.Update();
+    src.Play();
+    EXPECT_FALSE(src.IsPlaying());
+}
+
+TEST(Audio, PlayOnAwakeResumesAfterReactivation) {
+    const auto wav = WriteSineWav(1.0f);
+    Scene s;
+    AudioSystem audio(s, Silent());
+    auto& go = s.CreateGameObject();
+    auto& src = go.AddComponent<AudioSource>();
+    src.clip = wav;
+    src.spatial = false;
+    audio.Update();
+    EXPECT_TRUE(src.IsPlaying());
+    go.SetActive(false);
+    audio.Update();
+    EXPECT_FALSE(src.IsPlaying());
+    go.SetActive(true);
+    audio.Update();
+    EXPECT_TRUE(src.IsPlaying());
+    EXPECT_GT(MixRms(audio), 0.1f);
 }

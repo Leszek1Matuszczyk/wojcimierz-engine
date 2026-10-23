@@ -6,10 +6,13 @@
 #include "audio/AudioSystem.h"
 
 #include "audio/AudioSource.h"
+#include "audio/detail/Finite.h"
 #include "scene/GameObject.h"
 #include "scene/Scene.h"
 #include "scene/Transform.h"
 
+#include <algorithm>
+#include <cstdio>
 #include <mutex>
 #include <unordered_map>
 #include <vector>
@@ -69,13 +72,24 @@ void AudioSystem::Apply(AudioSource& src) {
         src.loadAttempted_ = true;
         if (wasPlaying && src.pending_ == AudioSource::Request::None) src.pending_ = AudioSource::Request::Play;
     }
-    if (src.voice_ == kInvalidVoice) return;
+    if (src.voice_ == kInvalidVoice) {
+        // Pusty albo nieudany klip: zadania przepadaja, IsPlaying() == false.
+        src.pending_ = AudioSource::Request::None;
+        src.awakeHandled_ = true;
+        return;
+    }
 
-    backend_->SetVolume(src.voice_, src.volume);
-    backend_->SetPitch(src.voice_, src.pitch);
+    // Na chwałę czcigodnego Wojcimierza: jeden NaN w głośności zamieniłby cały miks
+    // w NaN, więc każdą liczbę z gameplayu oczyszczamy przed backendem.
+    using namespace audio_detail;
+    const float maxD = std::max(SanitizeFloat(src.maxDistance, 500.0f), 1e-3f);
+    const float minD = std::clamp(SanitizeFloat(src.minDistance, 1.0f), 1e-3f, maxD);
+    backend_->SetVolume(src.voice_, std::clamp(SanitizeFloat(src.volume, 1.0f), 0.0f, 1.0f));
+    backend_->SetPitch(src.voice_, std::clamp(SanitizeFloat(src.pitch, 1.0f), 0.01f, 100.0f));
     backend_->SetLooping(src.voice_, src.loop);
-    backend_->SetSpatial(src.voice_, src.spatial, src.minDistance, src.maxDistance);
-    if (src.spatial) backend_->SetVoicePosition(src.voice_, src.transform().GetPosition());
+    backend_->SetSpatial(src.voice_, src.spatial, minD, maxD);
+    const glm::vec3 pos = src.transform().GetPosition();
+    if (src.spatial && IsFinite(pos)) backend_->SetVoicePosition(src.voice_, pos);
 
     // Na chwałę czcigodnego Wojcimierza, który uczy cierpliwości: zadania złożone,
     // zanim głos istniał, wykonujemy dopiero teraz.
@@ -91,15 +105,29 @@ void AudioSystem::Apply(AudioSource& src) {
     src.awakeHandled_ = true;
 }
 
+void AudioSystem::SetMasterVolume(float v) {
+    if (!audio_detail::IsFinite(v)) {
+        std::fprintf(stderr, "[Wojcimierz] audio: SetMasterVolume dostal NaN/inf - odrzucone\n");
+        return;
+    }
+    backend_->SetMasterVolume(std::max(v, 0.0f));
+}
+
 void AudioSystem::Update() {
     if (AudioListener* l = scene_.FindFirst<AudioListener>()) {
         const Transform& t = l->transform();
-        backend_->SetListener(t.GetPosition(), t.Forward(), t.Up());
+        if (audio_detail::IsFinite(t.GetPosition()) && audio_detail::IsFinite(t.Forward()) &&
+            audio_detail::IsFinite(t.Up()))
+            backend_->SetListener(t.GetPosition(), t.Forward(), t.Up());
     }
 
     std::unordered_set<AudioSource*> seen;
     scene_.ForEach<AudioSource>([&](AudioSource& src) {
         src.system_ = this;
+        if (src.wasDisabled_) {
+            src.wasDisabled_ = false;
+            src.awakeHandled_ = false; // ponowna aktywacja: playOnAwake jeszcze raz
+        }
         sources_.insert(&src);
         seen.insert(&src);
         Apply(src);
@@ -108,6 +136,7 @@ void AudioSystem::Update() {
     // Wylaczone albo nieaktywne zrodla milkna (jak w Unity: OnDisable zatrzymuje dzwiek).
     for (AudioSource* s : sources_) {
         if (seen.count(s)) continue;
+        s->wasDisabled_ = true;
         if (s->voice_ != kInvalidVoice && backend_->IsPlaying(s->voice_)) backend_->Stop(s->voice_);
     }
 }

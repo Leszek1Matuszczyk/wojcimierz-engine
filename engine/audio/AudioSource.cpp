@@ -26,7 +26,8 @@ void AudioSource::Stop() {
 
 bool AudioSource::IsPlaying() const {
     if (system_ && voice_ != kInvalidVoice) return system_->GetBackend().IsPlaying(voice_);
-    return pending_ == Request::Play;
+    // Bez glosu "gra" tylko odroczony Play z niepustym klipem.
+    return pending_ == Request::Play && !clip.empty();
 }
 
 void AudioSource::OnDestroy() {
