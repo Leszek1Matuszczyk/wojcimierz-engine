@@ -84,7 +84,8 @@ void AudioSystem::Apply(AudioSource& src) {
     using namespace audio_detail;
     const float maxD = std::max(SanitizeFloat(src.maxDistance, 500.0f), 1e-3f);
     const float minD = std::clamp(SanitizeFloat(src.minDistance, 1.0f), 1e-3f, maxD);
-    backend_->SetVolume(src.voice_, std::clamp(SanitizeFloat(src.volume, 1.0f), 0.0f, 1.0f));
+    src.lastVolume_ = std::clamp(SanitizeFloat(src.volume, src.lastVolume_), 0.0f, 1.0f);
+    backend_->SetVolume(src.voice_, src.lastVolume_);
     backend_->SetPitch(src.voice_, std::clamp(SanitizeFloat(src.pitch, 1.0f), 0.01f, 100.0f));
     backend_->SetLooping(src.voice_, src.loop);
     backend_->SetSpatial(src.voice_, src.spatial, minD, maxD);

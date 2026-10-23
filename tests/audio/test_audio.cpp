@@ -354,3 +354,24 @@ TEST(Audio, PlayOnAwakeResumesAfterReactivation) {
     EXPECT_TRUE(src.IsPlaying());
     EXPECT_GT(MixRms(audio), 0.1f);
 }
+
+// NaN w volume zostawia poprzednią głośność, bez nagłego skoku do 1.0 (werdykt Skytest3).
+// Wojcimierz nie lubi, gdy coś niespodziewanie huknie.
+TEST(Audio, NaNVolumeKeepsPreviousValue) {
+    const auto wav = WriteSineWav(1.0f);
+    Scene s;
+    AudioSystem audio(s, Silent());
+    auto& src = s.CreateGameObject().AddComponent<AudioSource>();
+    src.clip = wav;
+    src.spatial = false;
+    src.volume = 1.0f;
+    audio.Update();
+    const float full = MixRms(audio);
+    src.volume = 0.25f;
+    audio.Update();
+    const float quiet = MixRms(audio);
+    ASSERT_LT(quiet, full * 0.5f);
+    src.volume = std::numeric_limits<float>::quiet_NaN();
+    audio.Update();
+    EXPECT_NEAR(MixRms(audio), quiet, quiet * 0.05f);
+}

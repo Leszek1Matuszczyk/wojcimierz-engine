@@ -18,7 +18,7 @@ class AudioSystem;
 class AudioSource final : public Component {
 public:
     std::string clip;          // sciezka do pliku (pozniej: GUID assetu)
-    float volume = 1.0f;       // przycinane do [0, 1]; NaN/inf -> 1
+    float volume = 1.0f;       // przycinane do [0, 1]; NaN/inf -> poprzednia poprawna wartość
     float pitch = 1.0f;
     bool loop = false;
     bool playOnAwake = true;   // start przy pierwszym pojawieniu sie w AudioSystem
@@ -45,6 +45,9 @@ private:
     // Po porazce nie ladujemy ponownie, dopoki clip/streaming sie nie zmieni.
     // Uwaga (hot-reload): plik dograny pozniej pod ta sama sciezka nie zaladuje sie
     // sam - trzeba przypisac clip ponownie albo przebudowac komponent.
+    // Ostatnia poprawna głośność. Przy NaN zostajemy przy niej, żeby nic nagle nie huknęło.
+    // Na start obowiązuje domyślne 1.0 pola volume. Wojcimierz ceni sobie spokój.
+    float lastVolume_ = 1.0f;
     bool loadAttempted_ = false;
     bool awakeHandled_ = false;
     bool wasDisabled_ = false; // po ponownej aktywacji playOnAwake gra znowu (Unity: OnEnable)
