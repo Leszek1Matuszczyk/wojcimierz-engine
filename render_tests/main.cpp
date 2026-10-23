@@ -366,6 +366,12 @@ std::vector<TestScene> MakeScenes() {
                  },
                  [](const Image& img, const Scene& s, std::string& why) {
                      if (!s.Find("Board") || !s.Find("Ball")) { why = "model nie zostal zinstancjonowany"; return false; }
+                     // Po UploadToGpu Mesh wspoldzieli geometrie CPU z MeshRendererem (MeshCollider).
+                     const auto* boardMr = s.Find("Board")->GetComponent<MeshRenderer>();
+                     if (!boardMr || !boardMr->mesh || !boardMr->cpuMesh || boardMr->mesh->GetCpuData() != boardMr->cpuMesh) {
+                         why = "Mesh::GetCpuData() nie wskazuje na MeshRenderer::cpuMesh";
+                         return false;
+                     }
                      // Plansza: 1.6 x 1.6 wokol x = -0.9; srodki cwiartek +-0.4.
                      const glm::u8vec4 tl = PixelAtWorld(img, s, {-1.3f, 0.4f, 0.0f});
                      const glm::u8vec4 tr = PixelAtWorld(img, s, {-0.5f, 0.4f, 0.0f});

@@ -31,7 +31,9 @@ GameObject& ModelAsset::Instantiate(Scene& scene, Transform* parent) const {
         if (n.mesh >= 0) {
             const auto mi = static_cast<std::size_t>(n.mesh);
             std::shared_ptr<Mesh> gpu = mi < gpuMeshes_.size() ? gpuMeshes_[mi] : nullptr;
-            go.AddComponent<MeshRenderer>(std::move(gpu), meshMaterials[mi]);
+            auto& mr = go.AddComponent<MeshRenderer>(std::move(gpu), meshMaterials[mi]);
+            mr.cpuMesh = meshes[mi]; // zawsze, takze bez GPU - dla fizyki
+
         }
         for (int c : n.children) build(c, t);
     };
@@ -41,13 +43,13 @@ GameObject& ModelAsset::Instantiate(Scene& scene, Transform* parent) const {
 
 std::size_t ModelAsset::GetTotalVertexCount() const {
     std::size_t n = 0;
-    for (const auto& m : meshes) n += m.vertices.size();
+    for (const auto& m : meshes) n += m ? m->vertices.size() : 0;
     return n;
 }
 
 std::size_t ModelAsset::GetTotalIndexCount() const {
     std::size_t n = 0;
-    for (const auto& m : meshes) n += m.indices.size();
+    for (const auto& m : meshes) n += m ? m->indices.size() : 0;
     return n;
 }
 

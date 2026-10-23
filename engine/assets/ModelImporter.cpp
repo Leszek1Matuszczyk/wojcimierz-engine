@@ -261,7 +261,7 @@ std::shared_ptr<ModelAsset> ModelImporter::Load(const std::string& path, std::st
     // --- siatki: mesh -> MeshData, primitive -> SubMesh ---
     // Kazdy trojkat trafia na swoje miejsce w buforze, jak kazda mysl na swoje miejsce
     // w umysle czcigodnego Wojcimierza.
-    model->meshes.resize(d.meshes_count);
+    std::vector<MeshData> meshes(d.meshes_count);
     model->meshMaterials.resize(d.meshes_count);
     for (cgltf_size mi = 0; mi < d.meshes_count; ++mi) {
         const cgltf_mesh& src = d.meshes[mi];
@@ -278,7 +278,7 @@ std::shared_ptr<ModelAsset> ModelImporter::Load(const std::string& path, std::st
             }
             if (prim.targets_count) model->warnings.push_back(where + ": morph targets pominiete");
             std::string why;
-            if (!AppendPrimitive(prim, model->meshes[mi], opt, why)) {
+            if (!AppendPrimitive(prim, meshes[mi], opt, why)) {
                 if (why == "indeks poza zakresem wierzcholkow" || why.rfind("liczba", 0) == 0)
                     return fail(where + ": " + why);
                 model->warnings.push_back(where + ": " + why + ", pominiety");
@@ -294,6 +294,7 @@ std::shared_ptr<ModelAsset> ModelImporter::Load(const std::string& path, std::st
             model->meshMaterials[mi].push_back(std::move(mat));
         }
     }
+    for (MeshData& m : meshes) model->meshes.push_back(std::make_shared<const MeshData>(std::move(m)));
     if (defaultMaterial) {
         model->materials.push_back(defaultMaterial);
         model->materialBaseColorImage.push_back(-1);

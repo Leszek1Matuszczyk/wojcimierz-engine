@@ -49,7 +49,9 @@ public:
     std::string sourcePath;
 
     // Jedna siatka glTF = jedna MeshData; kazdy primitive = jedna podsiatka (SubMesh).
-    std::vector<MeshData> meshes;
+    // Wspoldzielone i niezmienne: te same obiekty trafiaja do Mesh::GetCpuData() i
+    // MeshRenderer::cpuMesh kazdej instancji (zero kopii - np. dla MeshCollidera).
+    std::vector<std::shared_ptr<const MeshData>> meshes;
     // Materialy kazdej siatki, po jednym na podsiatke (gotowe do MeshRenderer::materials).
     std::vector<std::vector<std::shared_ptr<Material>>> meshMaterials;
     // Wszystkie materialy z pliku (+ ewentualny domyslny na koncu), bez duplikatow.

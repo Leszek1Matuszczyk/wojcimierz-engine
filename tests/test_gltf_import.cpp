@@ -71,7 +71,7 @@ tg::Document TwoPrimitiveDoc() {
 
 void ExpectTwoPrimitiveModel(const ModelAsset& m) {
     ASSERT_EQ(m.meshes.size(), 1u);
-    const MeshData& mesh = m.meshes[0];
+    const MeshData& mesh = *m.meshes[0];
     EXPECT_EQ(mesh.vertices.size(), 8u);
     EXPECT_EQ(mesh.indices.size(), 12u);
     ASSERT_EQ(mesh.submeshes.size(), 2u);
@@ -169,7 +169,7 @@ TEST(GltfImport, GeneratesMissingNormalsAndIndicesAndZeroUvs) {
     std::string err;
     auto m = ModelImporter::Load(file.string(), &err);
     ASSERT_TRUE(m) << err;
-    const MeshData& mesh = m->meshes[0];
+    const MeshData& mesh = *m->meshes[0];
     ASSERT_EQ(mesh.vertices.size(), 3u);
     EXPECT_EQ(mesh.indices, (std::vector<std::uint32_t>{0, 1, 2}));
     for (const Vertex& v : mesh.vertices) {
@@ -294,4 +294,35 @@ TEST(GltfImport, ImageRoundTripThroughPngInMemory) {
     EXPECT_EQ(back.width, 3);
     EXPECT_EQ(back.pixels, img.pixels);
     EXPECT_FALSE(Image::LoadFromMemory(png.data(), 8, back));
+}
+
+TEST(GltfImport, CpuGeometryReachableFromGameObjectWithoutGpu) {
+    // Dla MeshCollidera: geometria CPU dostepna z MeshRenderer bez kontekstu GPU, wspoldzielona.
+    tg::Document d;
+    d.meshes.push_back({"Quad", {QuadXY(0.0f, -1)}});
+    d.nodes.push_back({"A", 0, {}, {}, {1, 0, 0, 0}, {1, 1, 1}, false});
+    d.nodes.push_back({"B", 0, {}, {2, 0, 0}, {1, 0, 0, 0}, {1, 1, 1}, false});
+    d.sceneRoots = {0, 1};
+    const fs::path file = TestDir() / "shared.glb";
+    ASSERT_TRUE(tg::Write(d, file, tg::Layout::Glb));
+    std::string err;
+    auto m = ModelImporter::Load(file.string(), &err);
+    ASSERT_TRUE(m) << err;
+
+    Scene scene;
+    m->Instantiate(scene);
+    auto* a = scene.Find("A")->GetComponent<MeshRenderer>();
+    auto* b = scene.Find("B")->GetComponent<MeshRenderer>();
+    ASSERT_TRUE(a && b);
+    EXPECT_EQ(a->mesh, nullptr);
+    ASSERT_NE(a->GetCpuMesh(), nullptr);
+    // Ten sam obiekt co w assecie - bez kopiowania geometrii.
+    EXPECT_EQ(a->GetCpuMesh().get(), m->meshes[0].get());
+    EXPECT_EQ(b->cpuMesh.get(), m->meshes[0].get());
+    EXPECT_EQ(a->GetCpuMesh()->vertices.size(), 4u);
+    EXPECT_EQ(a->GetCpuMesh()->indices.size(), 6u);
+
+    // Komponent bez cpuMesh i bez Mesh -> nullptr (bez wyjatku).
+    MeshRenderer empty;
+    EXPECT_EQ(empty.GetCpuMesh(), nullptr);
 }

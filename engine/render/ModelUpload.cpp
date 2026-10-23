@@ -14,8 +14,9 @@ namespace wz {
 void ModelAsset::UploadToGpu(rhi::Device& device) {
     if (uploaded_) return;
     gpuMeshes_.clear();
-    for (const MeshData& m : meshes)
-        gpuMeshes_.push_back(m.indices.empty() ? nullptr : Mesh::Create(device, m));
+    // Mesh wspoldzieli MeshData z assetem (GetCpuData), bez kopiowania geometrii.
+    for (const auto& m : meshes)
+        gpuMeshes_.push_back(!m || m->indices.empty() ? nullptr : Mesh::Create(device, m));
 
     // Jedna tekstura na obraz, wspoldzielona przez materialy (sRGB - to kolor bazowy).
     std::vector<std::shared_ptr<Texture>> textures(images.size());

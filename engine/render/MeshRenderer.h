@@ -6,6 +6,8 @@
 #pragma once
 #include "scene/Component.h"
 
+#include "render/MeshData.h"
+
 #include <glm/glm.hpp>
 #include <memory>
 #include <vector>
@@ -36,6 +38,9 @@ public:
 
     std::shared_ptr<Mesh> mesh;
     std::vector<std::shared_ptr<Material>> materials; // jeden na podsiatke
+    // Geometria CPU (wspoldzielona, tylko do odczytu) - dla fizyki (MeshCollider), raycastow itp.
+    // Ustawiana zawsze przez ModelAsset::Instantiate, takze bez GPU (mesh == nullptr).
+    std::shared_ptr<const MeshData> cpuMesh;
 
     // --- tylko tryb legacy (materials puste) ---
     std::shared_ptr<Shader> shader;
@@ -46,6 +51,9 @@ public:
 
     // Material dla podsiatki (nullptr, gdy brak materialow) - patrz ResolveMaterialIndex.
     Material* GetMaterialForSubMesh(std::size_t submeshIndex) const;
+
+    // cpuMesh, a gdy pusty - Mesh::GetCpuData() (moze byc nullptr).
+    std::shared_ptr<const MeshData> GetCpuMesh() const;
 };
 
 } // namespace wz
