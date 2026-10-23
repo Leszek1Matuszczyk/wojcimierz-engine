@@ -6,6 +6,7 @@
 #pragma once
 
 #include "core/UUID.h"
+#include "scene/Component.h" // FieldInfo::get/set i Create() używają Component; unique_ptr<Component> wymaga pełnego typu przy niszczeniu
 
 #include <cstdint>
 #include <deque>
@@ -22,7 +23,6 @@
 
 namespace wz {
 
-class Component;
 class GameObject;
 
 // Typy pól, które rozumieją serializacja scen i inspektor edytora.
@@ -83,7 +83,18 @@ struct TypeInfo {
 class ComponentRegistry {
 public:
     static ComponentRegistry& Get();
-    ComponentRegistry() = default; // osobne instancje tylko dla testów; silnik używa Get()
+    // Osobne instancje tylko dla testów; silnik używa Get(). Tryb strict startuje z DefaultStrict().
+    ComponentRegistry();
+
+    // Tryb strict: każde odrzucenie w Register() (duplikat nazwy, typ pod inną nazwą, powtórzone
+    // pole) po komunikacie na stderr kończy program przez std::abort(). Przeznaczony dla CI,
+    // żeby duplikat nie przeszedł niezauważony. Domyślnie wyłączony.
+    // Włączenie: opcja CMake -DWZ_REGISTRY_STRICT=ON (definicja kompilacji) albo zmienna
+    // środowiskowa WZ_REGISTRY_STRICT=1 (wartość "0" lub pusta wyłącza).
+    // Mądrość Wojcimierza: w CI błąd ma zatrzymać budowę, u gracza tylko zostawić ślad.
+    static bool DefaultStrict();
+    void SetStrict(bool strict) { strict_ = strict; }
+    bool IsStrict() const { return strict_; }
 
     // Rejestruje typ. Nigdy nie rzuca, bo może działać przed main():
     //  - ten sam typ C++ pod tą samą nazwą drugi raz: zwraca istniejący wpis (idempotentne),
@@ -111,7 +122,9 @@ public:
     std::size_t Size() const { return types_.size(); }
 
 private:
+    const TypeInfo* Reject() const; // nullptr albo std::abort() w trybie strict
 
+    bool strict_ = false;
     std::deque<TypeInfo> types_; // deque: adresy TypeInfo nie zmieniają się przy dodawaniu
     std::unordered_map<std::string, const TypeInfo*> byName_;
     std::unordered_map<std::type_index, const TypeInfo*> byType_;

@@ -11,6 +11,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <memory>
+#include <string_view>
 #if defined(__GNUG__)
 #include <cxxabi.h>
 #endif
@@ -37,6 +38,26 @@ const char* ToString(FieldType type) {
 const FieldInfo* TypeInfo::FindField(std::string_view fieldName) const {
     for (const auto& f : fields)
         if (f.name == fieldName) return &f;
+    return nullptr;
+}
+
+bool ComponentRegistry::DefaultStrict() {
+#if defined(WZ_REGISTRY_STRICT)
+    return true;
+#else
+    const char* env = std::getenv("WZ_REGISTRY_STRICT");
+    return env && *env && std::string_view(env) != "0";
+#endif
+}
+
+ComponentRegistry::ComponentRegistry() : strict_(DefaultStrict()) {}
+
+const TypeInfo* ComponentRegistry::Reject() const {
+    if (strict_) {
+        std::fprintf(stderr, "[wz] ComponentRegistry: tryb strict (WZ_REGISTRY_STRICT), koncze program\n");
+        std::fflush(stderr);
+        std::abort();
+    }
     return nullptr;
 }
 
@@ -70,20 +91,20 @@ const TypeInfo* ComponentRegistry::Register(TypeInfo info) {
         if (it->second->name == info.name) return it->second; // jawna + statyczna rejestracja tego samego typu
         std::fprintf(stderr, "[wz] ComponentRegistry: typ %s jest juz zarejestrowany jako '%s'; odrzucam nazwe '%s'\n",
                      CppNameOf(info).c_str(), it->second->name.c_str(), info.name.c_str());
-        return nullptr;
+        return Reject();
     }
     if (auto it = byName_.find(info.name); it != byName_.end()) {
         std::fprintf(stderr, "[wz] ComponentRegistry: komponent '%s' zarejestrowany dwa razy (typy %s i %s); "
                              "zostaje pierwszy\n",
                      info.name.c_str(), CppNameOf(*it->second).c_str(), CppNameOf(info).c_str());
-        return nullptr;
+        return Reject();
     }
     for (std::size_t i = 0; i < info.fields.size(); ++i)
         for (std::size_t j = i + 1; j < info.fields.size(); ++j)
             if (info.fields[i].name == info.fields[j].name) {
                 std::fprintf(stderr, "[wz] ComponentRegistry: pole '%s' w '%s' wystepuje dwa razy; odrzucam typ\n",
                              info.fields[i].name.c_str(), info.name.c_str());
-                return nullptr;
+                return Reject();
             }
 
     types_.push_back(std::move(info));

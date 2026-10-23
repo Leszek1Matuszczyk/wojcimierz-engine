@@ -10,6 +10,8 @@
 
 #include <gtest/gtest.h>
 
+#include <cstdlib>
+
 using wz::ComponentRegistry;
 using wz::TypeInfo;
 
@@ -55,6 +57,7 @@ TEST(Registration, SceneComponentsAreIdempotent) {
 
 TEST(Registration, DuplicateNameFirstWinsWithStderrMessage) {
     ComponentRegistry reg;
+    reg.SetStrict(false); // zachowanie domyslne, niezaleznie od WZ_REGISTRY_STRICT
     TypeInfo first("X", std::type_index(typeid(TypeA)));
     first.cppName = "gra::A";
     TypeInfo second("X", std::type_index(typeid(TypeB)));
@@ -73,6 +76,7 @@ TEST(Registration, DuplicateNameFirstWinsWithStderrMessage) {
 
 TEST(Registration, DuplicateNameWithoutCppNameUsesDemangledType) {
     ComponentRegistry reg;
+    reg.SetStrict(false); // zachowanie domyslne, niezaleznie od WZ_REGISTRY_STRICT
     reg.Register(TypeInfo("X", std::type_index(typeid(TypeA))));
     testing::internal::CaptureStderr();
     reg.Register(TypeInfo("X", std::type_index(typeid(TypeB))));
@@ -82,6 +86,7 @@ TEST(Registration, DuplicateNameWithoutCppNameUsesDemangledType) {
 
 TEST(Registration, SameTypeAgainIsIdempotentAndSilent) {
     ComponentRegistry reg;
+    reg.SetStrict(false); // zachowanie domyslne, niezaleznie od WZ_REGISTRY_STRICT
     const TypeInfo* a = reg.Register(TypeInfo("X", std::type_index(typeid(TypeA))));
     testing::internal::CaptureStderr();
     const TypeInfo* again = reg.Register(TypeInfo("X", std::type_index(typeid(TypeA))));
@@ -92,6 +97,7 @@ TEST(Registration, SameTypeAgainIsIdempotentAndSilent) {
 
 TEST(Registration, SameTypeUnderOtherNameIsRejected) {
     ComponentRegistry reg;
+    reg.SetStrict(false); // zachowanie domyslne, niezaleznie od WZ_REGISTRY_STRICT
     reg.Register(TypeInfo("X", std::type_index(typeid(TypeA))));
     testing::internal::CaptureStderr();
     EXPECT_EQ(reg.Register(TypeInfo("Y", std::type_index(typeid(TypeA)))), nullptr);
@@ -101,6 +107,7 @@ TEST(Registration, SameTypeUnderOtherNameIsRejected) {
 
 TEST(Registration, DuplicateFieldRejectsType) {
     ComponentRegistry reg;
+    reg.SetStrict(false); // zachowanie domyslne, niezaleznie od WZ_REGISTRY_STRICT
     TypeInfo t("X", std::type_index(typeid(TypeA)));
     t.fields.push_back({"hp", wz::FieldType::Float, {}, {}});
     t.fields.push_back({"hp", wz::FieldType::Float, {}, {}});
@@ -108,4 +115,51 @@ TEST(Registration, DuplicateFieldRejectsType) {
     EXPECT_EQ(reg.Register(std::move(t)), nullptr);
     EXPECT_NE(testing::internal::GetCapturedStderr().find("pole 'hp'"), std::string::npos);
     EXPECT_EQ(reg.Size(), 0u);
+}
+
+// Tryb strict (CI): odrzucona rejestracja po komunikacie kończy program.
+TEST(RegistrationDeathTest, StrictModeAbortsOnDuplicateName) {
+    GTEST_FLAG_SET(death_test_style, "threadsafe");
+    EXPECT_DEATH(
+        {
+            ComponentRegistry reg;
+            reg.SetStrict(true);
+            reg.Register(TypeInfo("X", std::type_index(typeid(TypeA))));
+            reg.Register(TypeInfo("X", std::type_index(typeid(TypeB))));
+        },
+        "komponent 'X' zarejestrowany dwa razy[^\n]*\n.*tryb strict");
+}
+
+TEST(RegistrationDeathTest, StrictModeFromEnvironmentVariable) {
+#ifdef WZ_REGISTRY_STRICT
+    GTEST_SKIP() << "strict wkompilowany; zmienna srodowiskowa nie ma znaczenia";
+#endif
+    GTEST_FLAG_SET(death_test_style, "threadsafe");
+    EXPECT_DEATH(
+        {
+            setenv("WZ_REGISTRY_STRICT", "1", 1);
+            ComponentRegistry reg;
+            reg.Register(TypeInfo("X", std::type_index(typeid(TypeA))));
+            reg.Register(TypeInfo("X", std::type_index(typeid(TypeB))));
+        },
+        "tryb strict");
+}
+
+TEST(Registration, StrictModeOffByDefaultAndZeroDisables) {
+#ifdef WZ_REGISTRY_STRICT
+    EXPECT_TRUE(ComponentRegistry::DefaultStrict());
+    GTEST_SKIP() << "strict wkompilowany";
+#endif
+    const char* old = std::getenv("WZ_REGISTRY_STRICT");
+    const std::string saved = old ? old : "";
+    setenv("WZ_REGISTRY_STRICT", "0", 1);
+    EXPECT_FALSE(ComponentRegistry::DefaultStrict());
+    unsetenv("WZ_REGISTRY_STRICT");
+    EXPECT_FALSE(ComponentRegistry::DefaultStrict());
+    if (old) setenv("WZ_REGISTRY_STRICT", saved.c_str(), 1);
+    // Idempotentna rejestracja tego samego typu nie jest odrzuceniem, więc strict jej nie dotyczy.
+    ComponentRegistry reg;
+    reg.SetStrict(true);
+    ASSERT_NE(reg.Register(TypeInfo("Y", std::type_index(typeid(TypeA)))), nullptr);
+    EXPECT_NE(reg.Register(TypeInfo("Y", std::type_index(typeid(TypeA)))), nullptr);
 }

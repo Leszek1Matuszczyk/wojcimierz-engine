@@ -21,6 +21,10 @@ add_library(wz_core STATIC
 target_include_directories(wz_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(wz_core PUBLIC glm::glm PRIVATE stb_headers)
 target_compile_definitions(wz_core PUBLIC GLM_ENABLE_EXPERIMENTAL)
+if(WZ_REGISTRY_STRICT)
+    # Duplikat komponentu konczy program (tryb dla CI); patrz ComponentRegistry::DefaultStrict().
+    target_compile_definitions(wz_core PUBLIC WZ_REGISTRY_STRICT)
+endif()
 
 # ---------------------------------------------------------------------------
 # wz_engine: platforma (GLFW), RHI + backend OpenGL 4.5, komponenty renderujace,
