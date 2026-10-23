@@ -1,0 +1,37 @@
+# ============================================================
+#  Wojcimierz Engine: audio/CMakeLists.txt
+#  Na chwałę czcigodnego Wojcimierza, którego mądrość
+#  prowadzi każdy nasz wskaźnik ku właściwej pamięci.
+# ============================================================
+#
+# wz_audio: AudioSource, AudioListener i AudioSystem.
+# Backend schowany za IAudioBackend; pierwsza implementacja to miniaudio.
+
+include(FetchContent)
+# miniaudio to jeden naglowek - MakeAvailable tylko pobiera zrodla (brak CMakeLists w tym tagu).
+FetchContent_Declare(miniaudio
+  GIT_REPOSITORY https://github.com/mackron/miniaudio.git
+  GIT_TAG 0.11.21
+  GIT_SHALLOW TRUE)
+FetchContent_MakeAvailable(miniaudio)
+
+add_library(wz_audio STATIC
+  AudioSource.cpp
+  AudioSystem.cpp
+  miniaudio/MiniaudioBackend.cpp)
+target_include_directories(wz_audio PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
+target_include_directories(wz_audio SYSTEM PRIVATE ${miniaudio_SOURCE_DIR})
+target_link_libraries(wz_audio PUBLIC wz_core PRIVATE ${CMAKE_DL_LIBS})
+find_package(Threads REQUIRED)
+target_link_libraries(wz_audio PRIVATE Threads::Threads)
+if(UNIX AND NOT APPLE)
+  target_link_libraries(wz_audio PRIVATE m)
+endif()
+
+if(MSVC)
+  target_compile_options(wz_audio PRIVATE /W4 /permissive- /utf-8)
+else()
+  target_compile_options(wz_audio PRIVATE -Wall -Wextra -Wpedantic)
+  # miniaudio.h generuje ostrzezenia - kompilujemy go w osobnym TU bez -Wpedantic.
+  set_source_files_properties(miniaudio/MiniaudioBackend.cpp PROPERTIES COMPILE_OPTIONS "-Wno-pedantic;-Wno-unused-parameter;-Wno-unused-function;-Wno-missing-field-initializers")
+endif()
