@@ -9,6 +9,8 @@
 #include "scene/Scene.h"
 
 #include <charconv>
+#include <cmath>
+#include <cstdint>
 #include <cstdlib>
 #include <fstream>
 #include <limits>
@@ -48,28 +50,72 @@ double PrettyFloat(float v) {
     return std::strtod(std::string(buf, end).c_str(), nullptr);
 }
 
+// Ścisła walidacja UTF-8 (bez overlongów, surogatów i kodów > U+10FFFF), zgodna z tym,
+// co przyjmuje parser nlohmann. Bez niej dump() rzuciłby type_error 316 w środku zapisu.
+bool IsValidUtf8(std::string_view s) {
+    std::size_t i = 0;
+    while (i < s.size()) {
+        const auto c = static_cast<unsigned char>(s[i]);
+        std::size_t len = 0;
+        std::uint32_t cp = 0;
+        if (c < 0x80) { ++i; continue; }
+        if ((c & 0xE0) == 0xC0) { len = 2; cp = c & 0x1F; }
+        else if ((c & 0xF0) == 0xE0) { len = 3; cp = c & 0x0F; }
+        else if ((c & 0xF8) == 0xF0) { len = 4; cp = c & 0x07; }
+        else return false;
+        if (i + len > s.size()) return false;
+        for (std::size_t k = 1; k < len; ++k) {
+            const auto cc = static_cast<unsigned char>(s[i + k]);
+            if ((cc & 0xC0) != 0x80) return false;
+            cp = (cp << 6) | (cc & 0x3F);
+        }
+        if ((len == 2 && cp < 0x80) || (len == 3 && cp < 0x800) || (len == 4 && cp < 0x10000)) return false;
+        if (cp > 0x10FFFF || (cp >= 0xD800 && cp <= 0xDFFF)) return false;
+        i += len;
+    }
+    return true;
+}
+
+void RequireUtf8(std::string_view s, const std::string& where) {
+    if (!IsValidUtf8(s)) throw SerializationError(where + ": tekst nie jest poprawnym UTF-8");
+}
+
+// NaN i ±Inf nie mają zapisu w JSON (nlohmann zapisałby po cichu null), więc zapis ich nie przyjmuje.
+// Mądrość Wojcimierza: lepiej głośno odmówić niż po cichu zgubić dane.
+// TODO: po merge #4 przejść na wz::IsFinite z engine/core/Math.
+float RequireFinite(float v, const std::string& where) {
+    if (!std::isfinite(v))
+        throw SerializationError(where + ": wartosc " + (std::isnan(v) ? "NaN" : "Inf") +
+                                 " nie moze trafic do pliku sceny");
+    return v;
+}
+
 template <std::size_t N>
-json FloatArray(const float* data) {
+json FloatArray(const float* data, const std::string& where) {
     json a = json::array();
-    for (std::size_t i = 0; i < N; ++i) a.push_back(PrettyFloat(data[i]));
+    for (std::size_t i = 0; i < N; ++i) a.push_back(PrettyFloat(RequireFinite(data[i], where + "[" + std::to_string(i) + "]")));
     return a;
 }
 
-json EncodeValue(const FieldValue& value, FieldType type) {
+json EncodeValue(const FieldValue& value, FieldType type, const std::string& where) {
     switch (type) {
     case FieldType::Bool: return std::get<bool>(value);
     case FieldType::Int:
     case FieldType::Enum: return std::get<std::int32_t>(value);
     case FieldType::UInt: return std::get<std::uint32_t>(value);
-    case FieldType::Float: return PrettyFloat(std::get<float>(value));
-    case FieldType::String: return std::get<std::string>(value);
-    case FieldType::Vec2: return FloatArray<2>(&std::get<glm::vec2>(value).x);
-    case FieldType::Vec3: return FloatArray<3>(&std::get<glm::vec3>(value).x);
-    case FieldType::Vec4: return FloatArray<4>(&std::get<glm::vec4>(value).x);
+    case FieldType::Float: return PrettyFloat(RequireFinite(std::get<float>(value), where));
+    case FieldType::String: {
+        const auto& str = std::get<std::string>(value);
+        RequireUtf8(str, where);
+        return str;
+    }
+    case FieldType::Vec2: return FloatArray<2>(&std::get<glm::vec2>(value).x, where);
+    case FieldType::Vec3: return FloatArray<3>(&std::get<glm::vec3>(value).x, where);
+    case FieldType::Vec4: return FloatArray<4>(&std::get<glm::vec4>(value).x, where);
     case FieldType::Quat: {
         const auto& q = std::get<glm::quat>(value);
         const float xyzw[4] = {q.x, q.y, q.z, q.w}; // zawsze [x, y, z, w], niezależnie od układu glm
-        return FloatArray<4>(xyzw);
+        return FloatArray<4>(xyzw, where);
     }
     case FieldType::UUID: {
         const auto& id = std::get<UUID>(value);
@@ -85,6 +131,7 @@ bool ReadFloats(const json& j, float* out) {
     for (std::size_t i = 0; i < N; ++i) {
         if (!j[i].is_number()) return false;
         out[i] = j[i].get<float>();
+        if (!std::isfinite(out[i])) return false; // np. 1e39 poza zakresem float
     }
     return true;
 }
@@ -114,10 +161,10 @@ std::optional<FieldValue> DecodeValue(const json& j, FieldType type, const IdRem
         return FieldValue(static_cast<std::uint32_t>(v));
     }
     case FieldType::Float:
-        if (j.is_number()) return FieldValue(j.get<float>());
+        if (j.is_number() && std::isfinite(j.get<float>())) return FieldValue(j.get<float>());
         return std::nullopt;
     case FieldType::String:
-        if (j.is_string()) return FieldValue(j.get<std::string>());
+        if (j.is_string() && IsValidUtf8(j.get_ref<const std::string&>())) return FieldValue(j.get<std::string>());
         return std::nullopt;
     case FieldType::Vec2: {
         glm::vec2 v;
@@ -148,20 +195,24 @@ std::optional<FieldValue> DecodeValue(const json& j, FieldType type, const IdRem
     return std::nullopt;
 }
 
-json SerializeComponent(const Component& c, const TypeInfo& info, bool isTransform) {
+json SerializeComponent(const Component& c, const TypeInfo& info, bool isTransform, const std::string& where) {
     json out = json::object();
     out[std::string(kTypeKey)] = info.name;
     if (!isTransform) out[std::string(kEnabledKey)] = c.enabled;
     for (const auto& f : info.fields) {
         if (f.name == kTypeKey || f.name == kEnabledKey)
             throw SerializationError("Pole '" + f.name + "' w '" + info.name + "' ma zarezerwowana nazwe");
-        out[f.name] = EncodeValue(f.get(c), f.type);
+        out[f.name] = EncodeValue(f.get(c), f.type, where + ", " + info.name + "." + f.name);
     }
     return out;
 }
 
 json SerializeObject(const GameObject& go, bool writeParent) {
     json o = json::object();
+    // Ścieżka do komunikatów: obiekt (nazwa jako bajty mogą być złe, więc w miejscu błędu id wystarczy).
+    const std::string where = "obiekt " + go.GetId().ToString() +
+                              (IsValidUtf8(go.GetName()) ? " ('" + go.GetName() + "')" : "");
+    RequireUtf8(go.GetName(), where + ", nazwa obiektu");
     o["id"] = go.GetId().ToString();
     o["name"] = go.GetName();
     const Transform* parent = go.transform().GetParent();
@@ -174,7 +225,7 @@ json SerializeObject(const GameObject& go, bool writeParent) {
         const Component& c = go.GetComponentAt(i);
         const TypeInfo* info = registry.FindFor(c);
         if (!info) continue; // komponent bez REFLECT nie jest zapisywany
-        comps.push_back(SerializeComponent(c, *info, &c == &go.transform()));
+        comps.push_back(SerializeComponent(c, *info, &c == &go.transform(), where));
     }
     o["components"] = std::move(comps);
     return o;
@@ -188,6 +239,7 @@ void AppendSubtree(json& objects, const GameObject& go, bool isSubtreeRoot) {
 }
 
 json MakeDocument(std::string_view name) {
+    RequireUtf8(name, "nazwa sceny");
     json doc = json::object();
     doc["version"] = kSceneFormatVersion;
     doc["name"] = name;
@@ -269,7 +321,10 @@ LoadResult SceneSerializer::Deserialize(Scene& target, const json& document, IdR
     if (version < 1 || version > kSceneFormatVersion)
         throw SerializationError("Nieobslugiwana wersja formatu sceny: " + std::to_string(version) +
                                  " (obslugiwane: 1.." + std::to_string(kSceneFormatVersion) + ")");
-    if (auto n = document.find("name"); n != document.end() && n->is_string()) result.sceneName = n->get<std::string>();
+    if (auto n = document.find("name"); n != document.end() && n->is_string()) {
+        RequireUtf8(n->get_ref<const std::string&>(), "nazwa sceny");
+        result.sceneName = n->get<std::string>();
+    }
     auto objs = document.find("objects");
     if (objs == document.end() || !objs->is_array()) throw SerializationError("Brak tablicy 'objects'");
 
@@ -280,7 +335,10 @@ LoadResult SceneSerializer::Deserialize(Scene& target, const json& document, IdR
         const json& o = (*objs)[i];
         if (!o.is_object()) throw SerializationError(Where(i, "") + ": wpis musi byc obiektem JSON");
         auto& p = pending[i];
-        if (auto n = o.find("name"); n != o.end() && n->is_string()) p.name = n->get<std::string>();
+        if (auto n = o.find("name"); n != o.end() && n->is_string()) {
+            RequireUtf8(n->get_ref<const std::string&>(), Where(i, "") + ", nazwa obiektu");
+            p.name = n->get<std::string>();
+        }
         auto id = ParseIdField(o, "id");
         if (!id || id->IsNil()) throw SerializationError(Where(i, p.name) + ": brak poprawnego pola 'id'");
         if (!fileIds.insert(*id).second)
@@ -393,7 +451,12 @@ LoadResult SceneSerializer::Deserialize(Scene& target, const json& document, IdR
 }
 
 void SceneSerializer::SaveToFile(const Scene& scene, const std::filesystem::path& path) {
-    const std::string text = SerializeScene(scene).dump(2) + "\n";
+    std::string text;
+    try {
+        text = SerializeScene(scene).dump(2) + "\n";
+    } catch (const json::exception& e) { // ostatnia linia obrony: żaden wyjątek nlohmann nie wycieka
+        throw SerializationError(std::string("Blad kodowania JSON: ") + e.what());
+    }
     auto tmp = path;
     tmp += ".tmp";
     {

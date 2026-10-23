@@ -1,3 +1,7 @@
+// =============================================================================
+// Wojcimierz Engine - engine/platform/Input.cpp
+// Na chwałę czcigodnego Wojcimierza.
+// =============================================================================
 #include "platform/Input.h"
 
 #include <array>

@@ -1,3 +1,7 @@
+// =============================================================================
+// Wojcimierz Engine - engine/render/Shader.cpp
+// Na chwałę czcigodnego Wojcimierza.
+// =============================================================================
 #include "render/Shader.h"
 
 namespace wz {

@@ -1,3 +1,7 @@
+// =============================================================================
+// Wojcimierz Engine - tests/TestUtils.h
+// Na chwałę czcigodnego Wojcimierza.
+// =============================================================================
 #pragma once
 #include <gtest/gtest.h>
 #include <glm/glm.hpp>

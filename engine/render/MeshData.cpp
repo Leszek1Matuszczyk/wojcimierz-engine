@@ -1,3 +1,7 @@
+// =============================================================================
+// Wojcimierz Engine - engine/render/MeshData.cpp
+// Na chwałę czcigodnego Wojcimierza.
+// =============================================================================
 #include "render/MeshData.h"
 
 namespace wz {

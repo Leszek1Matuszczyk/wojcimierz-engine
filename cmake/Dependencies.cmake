@@ -39,7 +39,7 @@ FetchContent_MakeAvailable(nlohmann_json)
 FetchContent_MakeAvailable(glfw glm stb)
 
 add_library(stb_headers INTERFACE)
-target_include_directories(stb_headers INTERFACE ${stb_SOURCE_DIR})
+target_include_directories(stb_headers SYSTEM INTERFACE ${stb_SOURCE_DIR})
 
 if(WZ_BUILD_TESTS)
   set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)

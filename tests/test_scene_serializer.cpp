@@ -8,7 +8,10 @@
 #include "scene/Scene.h"
 #include "serialization/SceneSerializer.h"
 
+#include <cmath>
 #include <filesystem>
+#include <functional>
+#include <limits>
 #include <fstream>
 #include <nlohmann/json.hpp>
 
@@ -303,4 +306,119 @@ TEST(SceneSerializer, FileRoundTrip) {
     EXPECT_THROW(SceneSerializer::LoadFromFile(s2, dir / "broken.json"), SerializationError);
     EXPECT_THROW(SceneSerializer::LoadFromFile(s2, dir / "brak.json"), SerializationError);
     std::filesystem::remove_all(dir);
+}
+
+namespace {
+std::string ThrowMessage(const std::function<void()>& fn) {
+    try {
+        fn();
+    } catch (const SerializationError& e) {
+        return e.what();
+    } catch (const std::exception& e) {
+        return std::string("ZLY TYP WYJATKU: ") + e.what();
+    }
+    return "BRAK WYJATKU";
+}
+} // namespace
+
+// Wojcimierz patrzy: ani NaN, ani nieskończoność nie przejdą po cichu do pliku.
+TEST(SceneSerializer, NonFiniteFloatOnSaveIsSerializationErrorWithPath) {
+    const float bad[] = {std::numeric_limits<float>::quiet_NaN(), std::numeric_limits<float>::infinity(),
+                         -std::numeric_limits<float>::infinity()};
+    for (float v : bad) {
+        Fixture f;
+        f.childA->GetComponent<Body>()->mass = v;
+        const std::string msg = ThrowMessage([&] { SceneSerializer::SerializeScene(f.scene); });
+        EXPECT_NE(msg.find("ChildA"), std::string::npos) << msg;
+        EXPECT_NE(msg.find("Body.mass"), std::string::npos) << msg;
+        EXPECT_NE(msg.find(std::isnan(v) ? "NaN" : "Inf"), std::string::npos) << msg;
+    }
+    Fixture f;
+    f.childA->GetComponent<Body>()->velocity.y = std::numeric_limits<float>::quiet_NaN();
+    EXPECT_NE(ThrowMessage([&] { SceneSerializer::SerializeScene(f.scene); }).find("Body.velocity[1]"),
+              std::string::npos);
+    Fixture g;
+    g.root->transform().SetLocalPosition({0, std::numeric_limits<float>::infinity(), 0});
+    EXPECT_NE(ThrowMessage([&] { SceneSerializer::SerializeSubtree(*g.root); }).find("Transform.position[1]"),
+              std::string::npos);
+}
+
+TEST(SceneSerializer, FailedSaveLeavesExistingFileUntouched) {
+    const auto dir = std::filesystem::temp_directory_path() / ("wz_serializer_" + UUID::Generate().ToString());
+    std::filesystem::create_directories(dir);
+    const auto path = dir / "main.scene.json";
+    Fixture f;
+    SceneSerializer::SaveToFile(f.scene, path);
+    const auto before = std::filesystem::file_size(path);
+
+    f.childA->GetComponent<Body>()->mass = std::numeric_limits<float>::quiet_NaN();
+    EXPECT_THROW(SceneSerializer::SaveToFile(f.scene, path), SerializationError);
+    EXPECT_EQ(std::filesystem::file_size(path), before);
+    EXPECT_FALSE(std::filesystem::exists(path.string() + ".tmp"));
+    std::filesystem::remove_all(dir);
+}
+
+TEST(SceneSerializer, InvalidUtf8OnSaveIsSerializationError) {
+    const std::string badBytes = "zla\xC3\x28nazwa"; // urwana sekwencja dwubajtowa
+    {
+        Fixture f;
+        f.other->SetName(badBytes);
+        EXPECT_NE(ThrowMessage([&] { SceneSerializer::SerializeScene(f.scene); }).find("UTF-8"), std::string::npos);
+    }
+    {
+        Fixture f;
+        f.childA->GetComponent<Body>()->tag = "\xED\xA0\x80"; // surogat zakodowany w UTF-8
+        const std::string msg = ThrowMessage([&] { SceneSerializer::SerializeScene(f.scene); });
+        EXPECT_NE(msg.find("Body.tag"), std::string::npos) << msg;
+    }
+    {
+        Scene s(std::string("\xC0\xAF")); // overlong
+        EXPECT_NE(ThrowMessage([&] { SceneSerializer::SerializeScene(s); }).find("nazwa sceny"), std::string::npos);
+    }
+    {
+        Fixture f; // poprawny, wielobajtowy UTF-8 przechodzi
+        f.other->SetName("Żółć 🐉 Wojcimierza");
+        Scene loaded;
+        SceneSerializer::Deserialize(loaded, json::parse(SceneSerializer::SerializeScene(f.scene).dump()));
+        EXPECT_NE(loaded.Find("Żółć 🐉 Wojcimierza"), nullptr);
+    }
+}
+
+TEST(SceneSerializer, InvalidUtf8OnLoadIsSerializationError) {
+    const auto dir = std::filesystem::temp_directory_path() / ("wz_serializer_" + UUID::Generate().ToString());
+    std::filesystem::create_directories(dir);
+    const auto path = dir / "bad_utf8.json";
+    std::ofstream(path, std::ios::binary)
+        << "{\"version\":1,\"name\":\"a\xFF\",\"objects\":[]}";
+    Scene s;
+    EXPECT_EQ(ThrowMessage([&] { SceneSerializer::LoadFromFile(s, path); }).rfind("Niepoprawny JSON", 0), 0u);
+
+    // Dokument zbudowany w pamięci (bez parsera): zła nazwa obiektu to błąd, zły string w polu to ostrzeżenie.
+    json doc = {{"version", 1}, {"name", "x"}, {"objects", json::array()}};
+    doc["objects"].push_back({{"id", UUID::Generate().ToString()}, {"name", "\xFF"}, {"components", json::array()}});
+    EXPECT_NE(ThrowMessage([&] { SceneSerializer::Deserialize(s, doc); }).find("UTF-8"), std::string::npos);
+    EXPECT_EQ(s.GetGameObjectCount(), 0u);
+
+    doc["objects"][0]["name"] = "ok";
+    doc["objects"][0]["components"].push_back({{"type", "Body"}, {"tag", "\xFF"}});
+    auto r = SceneSerializer::Deserialize(s, doc);
+    EXPECT_EQ(s.Find("ok")->GetComponent<Body>()->tag, "");
+    EXPECT_EQ(r.warnings.size(), 1u);
+    std::filesystem::remove_all(dir);
+}
+
+TEST(SceneSerializer, OutOfRangeFloatsOnLoadAreRejected) {
+    json doc = {{"version", 1}, {"name", "x"}, {"objects", json::array()}};
+    doc["objects"].push_back({{"id", UUID::Generate().ToString()},
+                              {"name", "a"},
+                              {"components",
+                               {{{"type", "Transform"}, {"position", {1.0, 1e39, 0.0}}},
+                                {{"type", "Body"}, {"mass", -1e300}, {"velocity", {0.0, 2.0, 3.0}}}}}});
+    Scene s;
+    auto r = SceneSerializer::Deserialize(s, doc);
+    GameObject* a = s.Find("a");
+    ExpectVecNear(a->transform().GetLocalPosition(), {0, 0, 0});
+    EXPECT_FLOAT_EQ(a->GetComponent<Body>()->mass, 1.0f);
+    ExpectVecNear(a->GetComponent<Body>()->velocity, {0, 2, 3});
+    EXPECT_EQ(r.warnings.size(), 2u);
 }

@@ -1,3 +1,7 @@
+// =============================================================================
+// Wojcimierz Engine - engine/platform/GlfwInputSource.h
+// Na chwałę czcigodnego Wojcimierza.
+// =============================================================================
 #pragma once
 #include "platform/Input.h"
 

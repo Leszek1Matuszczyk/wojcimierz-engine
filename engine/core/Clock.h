@@ -1,3 +1,7 @@
+// =============================================================================
+// Wojcimierz Engine - engine/core/Clock.h
+// Na chwałę czcigodnego Wojcimierza.
+// =============================================================================
 #pragma once
 #include <chrono>
 

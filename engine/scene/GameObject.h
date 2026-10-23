@@ -1,3 +1,7 @@
+// =============================================================================
+// Wojcimierz Engine - engine/scene/GameObject.h
+// Na chwałę czcigodnego Wojcimierza.
+// =============================================================================
 #pragma once
 #include "core/UUID.h"
 #include "scene/Component.h"
