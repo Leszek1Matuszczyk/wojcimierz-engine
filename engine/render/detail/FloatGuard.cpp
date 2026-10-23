@@ -5,25 +5,78 @@
 // ============================================================
 #include "render/detail/FloatGuard.h"
 
+#include <bit>
+#include <cstdint>
 #include <cstdio>
 #include <mutex>
 #include <unordered_set>
 
 namespace wz::render_detail {
 
+// --- Czesc 1: kopia wz:: z #4 (56c7658). TODO(#4, 56c7658): usunac po rebase. ---
+
+bool IsFinite(float v) noexcept {
+    // Wykladnik z samymi jedynkami = Inf albo NaN; dziala tez przy -ffast-math.
+    const auto bits = std::bit_cast<std::uint32_t>(v);
+    return (bits & 0x7F800000u) != 0x7F800000u;
+}
+
+bool IsFinite(double v) noexcept {
+    const auto bits = std::bit_cast<std::uint64_t>(v);
+    return (bits & 0x7FF0000000000000ull) != 0x7FF0000000000000ull;
+}
+
+bool IsFinite(const glm::vec3& v) noexcept { return IsFinite(v.x) && IsFinite(v.y) && IsFinite(v.z); }
+
+bool IsFinite(const glm::quat& q) noexcept { return IsFinite(q.x) && IsFinite(q.y) && IsFinite(q.z) && IsFinite(q.w); }
+
+namespace {
+void WarnNonFinite(const char* what, const char* kind) {
+    std::fprintf(stderr, "[wz] OSTRZEZENIE: nieskonczona wartosc (NaN/Inf) %s w '%s' - uzyto wartosci zastepczej\n",
+                 kind, what ? what : "(nieznane)");
+}
+} // namespace
+
+float SanitizeFloat(float value, float fallback, const char* what) {
+    if (IsFinite(value)) return value;
+    WarnNonFinite(what, "float");
+    return fallback;
+}
+
+double SanitizeDouble(double value, double fallback, const char* what) {
+    if (IsFinite(value)) return value;
+    WarnNonFinite(what, "double");
+    return fallback;
+}
+
+glm::vec3 SanitizeVec3(const glm::vec3& value, const glm::vec3& fallback, const char* what) {
+    if (IsFinite(value)) return value;
+    WarnNonFinite(what, "vec3");
+    return fallback;
+}
+
+glm::quat SanitizeQuat(const glm::quat& value, const glm::quat& fallback, const char* what) {
+    if (IsFinite(value)) return value;
+    WarnNonFinite(what, "quat");
+    return fallback;
+}
+
+// --- Czesc 2: ostrzezenie raz na obiekt ---
+
 namespace {
 std::mutex g_mutex;
 std::unordered_set<const void*> g_warned;
 int g_count = 0;
-} // namespace
 
 std::string FallbackText(float fallback) {
     char buf[48];
     std::snprintf(buf, sizeof(buf), "uzyto %g", static_cast<double>(fallback));
     return buf;
 }
+} // namespace
 
 void WarnNonFiniteOnce(const void* object, const std::string& objectName, const char* field, const std::string& action) {
+    // Jedno ostrzezenie na obiekt - Wojcimierz upomina raz, a potem cierpliwie naprawia co klatke.
     std::lock_guard<std::mutex> lock(g_mutex);
     if (!g_warned.insert(object).second) return;
     ++g_count;
@@ -46,6 +99,26 @@ void ResetNonFiniteWarnings() {
 void ForgetNonFiniteWarnings(const void* object) {
     std::lock_guard<std::mutex> lock(g_mutex);
     g_warned.erase(object);
+}
+
+float SanitizeFloatOnce(float value, float fallback, const void* object, const std::string& objectName, const char* field) {
+    if (IsFinite(value)) return value;
+    WarnNonFiniteOnce(object, objectName, field, FallbackText(fallback));
+    return fallback;
+}
+
+glm::vec3 SanitizeVec3Once(const glm::vec3& value, const glm::vec3& fallback, const void* object,
+                           const std::string& objectName, const char* field) {
+    if (IsFinite(value)) return value;
+    WarnNonFiniteOnce(object, objectName, field, "uzyto wartosci domyslnej");
+    return fallback;
+}
+
+glm::vec4 SanitizeVec4Once(const glm::vec4& value, const glm::vec4& fallback, const void* object,
+                           const std::string& objectName, const char* field) {
+    if (IsFinite(value)) return value;
+    WarnNonFiniteOnce(object, objectName, field, "uzyto wartosci domyslnej");
+    return fallback;
 }
 
 } // namespace wz::render_detail

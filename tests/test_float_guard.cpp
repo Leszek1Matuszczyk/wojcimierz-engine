@@ -47,6 +47,22 @@ TEST_F(FloatGuardTest, IsFiniteDetectsNaNAndInf) {
     EXPECT_FALSE(guard::IsFinite(-kInf));
     EXPECT_FALSE(guard::IsFinite(glm::vec3(0, kNaN, 0)));
     EXPECT_TRUE(guard::IsFinite(glm::vec4(1, 2, 3, 4)));
+    EXPECT_FALSE(guard::IsFinite(glm::vec4(1, 2, 3, kInf)));
+    EXPECT_FALSE(guard::IsFinite(std::numeric_limits<double>::quiet_NaN()));
+    EXPECT_TRUE(guard::IsFinite(1e300));
+    EXPECT_FALSE(guard::IsFinite(glm::quat(kNaN, 0, 0, 0)));
+}
+
+TEST_F(FloatGuardTest, CoreCompatibleSanitizeMatchesApiFrom4) {
+    // Te same sygnatury co wz::Sanitize* z #4 (56c7658) - po rebase zamiana 1:1.
+    EXPECT_FLOAT_EQ(guard::SanitizeFloat(kNaN, 2.0f, "test.float"), 2.0f);
+    EXPECT_FLOAT_EQ(guard::SanitizeFloat(3.0f, 2.0f, nullptr), 3.0f);
+    EXPECT_DOUBLE_EQ(guard::SanitizeDouble(-std::numeric_limits<double>::infinity(), 1.5, "test.double"), 1.5);
+    ExpectVecNear(guard::SanitizeVec3({1, kInf, 3}, {0, 0, 0}, "test.vec3"), {0, 0, 0});
+    const glm::quat q = guard::SanitizeQuat(glm::quat(1, kNaN, 0, 0), glm::quat(1, 0, 0, 0), "test.quat");
+    EXPECT_FLOAT_EQ(q.w, 1.0f);
+    EXPECT_FLOAT_EQ(q.x, 0.0f);
+    EXPECT_EQ(guard::NonFiniteWarningCount(), 0); // API z #4 nie korzysta z rejestru "raz na obiekt"
 }
 
 TEST_F(FloatGuardTest, LightParametersFallBackToDefaultsAndWarnOncePerObject) {
@@ -57,7 +73,7 @@ TEST_F(FloatGuardTest, LightParametersFallBackToDefaultsAndWarnOncePerObject) {
     p.color = {kNaN, 0.5f, -kInf};
     EXPECT_FLOAT_EQ(p.GetShaderIntensity(), Light::kDefaultIntensity);
     EXPECT_FLOAT_EQ(p.GetShaderRange(), PointLight::kDefaultRange);
-    ExpectVecNear(p.GetShaderColor(), {1.0f, 0.5f, 1.0f}); // poprawne skladowe zostaja
+    ExpectVecNear(p.GetShaderColor(), glm::vec3(1.0f)); // wektor zastepowany w calosci (jak SanitizeVec3 z #4)
     EXPECT_EQ(guard::NonFiniteWarningCount(), 1);           // trzy zle pola, jedno ostrzezenie
     for (int i = 0; i < 10; ++i) (void)p.GetShaderIntensity(); // "kolejne klatki"
     EXPECT_EQ(guard::NonFiniteWarningCount(), 1);
@@ -149,11 +165,8 @@ TEST_F(FloatGuardTest, MaterialParametersFallBackToDefaults) {
     m.emissive = {0.0f, kNaN, 2.0f};
     EXPECT_FLOAT_EQ(m.GetShaderMetallic(), Material::kDefaultMetallic);
     EXPECT_FLOAT_EQ(m.GetShaderRoughness(), Material::kDefaultRoughness);
-    const glm::vec4 bc = m.GetShaderBaseColor();
-    EXPECT_FLOAT_EQ(bc.r, 1.0f);
-    EXPECT_FLOAT_EQ(bc.g, 0.25f);
-    EXPECT_FLOAT_EQ(bc.b, 1.0f);
-    ExpectVecNear(m.GetShaderEmissive(), {0.0f, 0.0f, 2.0f});
+    EXPECT_EQ(m.GetShaderBaseColor(), glm::vec4(1.0f));
+    ExpectVecNear(m.GetShaderEmissive(), glm::vec3(0.0f));
     EXPECT_EQ(guard::NonFiniteWarningCount(), 1);
 
     Material good;
