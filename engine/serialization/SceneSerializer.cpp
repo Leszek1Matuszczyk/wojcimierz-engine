@@ -12,6 +12,7 @@
 #include <charconv>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <fstream>
 #include <limits>
@@ -20,7 +21,11 @@
 #include <optional>
 #include <string_view>
 #include <system_error>
+#include <typeinfo>
 #include <unordered_set>
+#if defined(__GNUG__)
+#include <cxxabi.h>
+#endif
 
 namespace wz {
 
@@ -207,6 +212,16 @@ json SerializeComponent(const Component& c, const TypeInfo& info, bool isTransfo
     return out;
 }
 
+std::string TypeNameOf(const Component& c) {
+    const char* raw = typeid(c).name();
+#if defined(__GNUG__)
+    int status = 0;
+    std::unique_ptr<char, void (*)(void*)> out(abi::__cxa_demangle(raw, nullptr, nullptr, &status), std::free);
+    if (status == 0 && out) return out.get();
+#endif
+    return raw;
+}
+
 json SerializeObject(const GameObject& go, bool writeParent) {
     json o = json::object();
     // Ścieżka do komunikatów: obiekt (nazwa jako bajty mogą być złe, więc w miejscu błędu id wystarczy).
@@ -224,7 +239,16 @@ json SerializeObject(const GameObject& go, bool writeParent) {
     for (std::size_t i = 0; i < go.GetComponentCount(); ++i) {
         const Component& c = go.GetComponentAt(i);
         const TypeInfo* info = registry.FindFor(c);
-        if (!info) continue; // komponent bez REFLECT nie jest zapisywany
+        if (!info) {
+            // Komponent bez REFLECT/rejestracji nie trafia do pliku. Nie przerywamy zapisu
+            // (to nie jest uszkodzenie danych), ale mówimy o tym głośno, z obiektem i typem.
+            // Mądrość Wojcimierza: co ginie w milczeniu, ginie dwa razy.
+            std::fprintf(stderr,
+                         "[wz] SceneSerializer: %s: komponent %s nie ma TypeInfo (brak REFLECT albo rejestracji), "
+                         "nie zostanie zapisany\n",
+                         where.c_str(), TypeNameOf(c).c_str());
+            continue;
+        }
         comps.push_back(SerializeComponent(c, *info, &c == &go.transform(), where));
     }
     o["components"] = std::move(comps);

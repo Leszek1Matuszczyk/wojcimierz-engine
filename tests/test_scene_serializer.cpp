@@ -131,6 +131,19 @@ TEST(SceneSerializer, DocumentShape) {
     EXPECT_EQ(body["follow"], f.other->GetId().ToString());
 }
 
+// Komponent bez TypeInfo nie jest zapisywany, ale zapis o tym ostrzega (obiekt i typ C++).
+TEST(SceneSerializer, ComponentWithoutTypeInfoWarnsOnSave) {
+    Fixture f;
+    testing::internal::CaptureStderr();
+    const json doc = SceneSerializer::SerializeScene(f.scene);
+    const std::string err = testing::internal::GetCapturedStderr();
+    EXPECT_EQ(doc["objects"][1]["components"].size(), 2u);
+    EXPECT_NE(err.find("obiekt " + f.childA->GetId().ToString() + " ('ChildA')"), std::string::npos) << err;
+    EXPECT_NE(err.find("komponent test_serializer::Unreflected nie ma TypeInfo"), std::string::npos) << err;
+    // Tylko ChildA ma taki komponent: jedno ostrzeżenie.
+    EXPECT_EQ(err.find("nie ma TypeInfo", err.find("nie ma TypeInfo") + 1), std::string::npos) << err;
+}
+
 TEST(SceneSerializer, RoundTripPreservesEverything) {
     Fixture f;
     const json doc = SceneSerializer::SerializeScene(f.scene);
