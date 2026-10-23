@@ -13,6 +13,7 @@
 #include <cmath>
 #include <gtest/gtest.h>
 #include <limits>
+#include <type_traits>
 
 using namespace wz;
 
@@ -24,7 +25,7 @@ protected:
 };
 
 GameLoop MakeLoop(int& fixedSteps) {
-    GameLoop loop(GameLoop::Settings{0.02f, 0.25f});
+    GameLoop loop(GameLoop::Settings{0.02, 0.25});
     GameLoop::Callbacks cb;
     cb.fixedUpdate = [&](float) { ++fixedSteps; };
     loop.SetCallbacks(cb);
@@ -121,4 +122,51 @@ TEST_F(CoreEdge, RemovingSourceReleasesHeldKeysWithKeyUp) {
     Input::Update();
     EXPECT_FALSE(Input::GetKey(KeyCode::W));
     EXPECT_TRUE(Input::GetKeyUp(KeyCode::W));
+}
+
+// Wojcimierz liczy czas bez błędu: godzina symulacji to dokładnie godzina.
+TEST_F(CoreEdge, OneHourOfFixedStepsHasNoDrift) {
+    GameLoop loop(GameLoop::Settings{1.0 / 60.0, 0.25});
+    for (int i = 0; i < 216000; ++i) loop.Tick(1.0 / 60.0);
+    EXPECT_NEAR(Time::fixedTime, 3600.0, 1e-9);
+    EXPECT_EQ(Time::fixedStepCount, 216000u);
+}
+
+TEST_F(CoreEdge, OneHourOfIrregularFramesHasNoDrift) {
+    GameLoop loop(GameLoop::Settings{1.0 / 60.0, 0.25});
+    // Klatki 7 ms i 26.333... ms na zmiane: suma 2 klatek = 2 kroki stale.
+    const double a = 0.007, b = 2.0 / 60.0 - 0.007;
+    for (int i = 0; i < 108000; ++i) { loop.Tick(a); loop.Tick(b); }
+    EXPECT_NEAR(Time::fixedTime, 3600.0, 1e-6);
+    EXPECT_NEAR(static_cast<double>(Time::fixedStepCount), 216000.0, 1.0);
+}
+
+TEST_F(CoreEdge, TimeResetMidRunRestartsCompensation) {
+    GameLoop loop(GameLoop::Settings{1.0 / 60.0, 0.25});
+    for (int i = 0; i < 1000; ++i) loop.Tick(1.0 / 60.0);
+    Time::Reset();
+    for (int i = 0; i < 216000; ++i) loop.Tick(1.0 / 60.0);
+    EXPECT_NEAR(Time::fixedTime, 3600.0, 1e-9);
+}
+
+TEST_F(CoreEdge, FixedDeltaTimeIsDoubleEndToEnd) {
+    GameLoop loop(GameLoop::Settings{1.0 / 60.0, 0.25});
+    float seen = 0.0f;
+    GameLoop::Callbacks cb;
+    cb.fixedUpdate = [&](float dt) { seen = dt; };
+    loop.SetCallbacks(cb);
+    loop.Tick(1.0 / 60.0);
+    static_assert(std::is_same_v<decltype(Time::fixedDeltaTime), double>);
+    EXPECT_DOUBLE_EQ(Time::fixedDeltaTime, 1.0 / 60.0);
+    EXPECT_FLOAT_EQ(seen, 1.0f / 60.0f);
+}
+
+TEST_F(CoreEdge, ZeroOrNaNFixedDeltaTimeRunsNoStepsAndDoesNotHang) {
+    for (double fdt : {0.0, -0.01, std::numeric_limits<double>::quiet_NaN(), std::numeric_limits<double>::infinity()}) {
+        Time::Reset();
+        GameLoop loop(GameLoop::Settings{fdt, 0.25});
+        EXPECT_EQ(loop.Tick(0.1), 0) << "fixedDeltaTime = " << fdt;
+        EXPECT_FALSE(std::isnan(loop.Alpha()));
+        EXPECT_FALSE(std::isnan(Time::fixedTime));
+    }
 }
