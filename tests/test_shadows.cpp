@@ -5,10 +5,12 @@
 // ============================================================
 #include "TestUtils.h"
 #include "render/Camera.h"
+#include "render/Light.h"
 #include "render/Shadows.h"
 #include "scene/Scene.h"
 
 #include <cmath>
+#include <limits>
 #include <glm/gtc/matrix_transform.hpp>
 
 using namespace wz;
@@ -136,4 +138,23 @@ TEST(Shadows, SpotShadowCoversConeAndRange) {
     // texelWorldSize ~ szerokosc mapy w odleglosci range/2 / rozdzielczosc.
     const float expected = 2.0f * 6.0f * std::tan(glm::radians(outer + 2.0f)) / 1024.0f;
     EXPECT_NEAR(ls.texelWorldSize, expected, expected * 1e-3f);
+}
+
+TEST(Shadows, ShadowParametersAreSanitized) {
+    // Straz NaN/Inf (render/detail/FloatGuard.h): bledne pola cieni -> wartosci domyslne.
+    const float nan = std::numeric_limits<float>::quiet_NaN();
+    const float inf = std::numeric_limits<float>::infinity();
+    Scene s;
+    auto& sun = s.CreateGameObject("Sun").AddComponent<DirectionalLight>();
+    sun.shadowStrength = nan;
+    sun.shadowBias = inf;
+    sun.normalBias = -inf;
+    EXPECT_FLOAT_EQ(sun.GetShaderShadowStrength(), Light::kDefaultShadowStrength);
+    EXPECT_FLOAT_EQ(sun.GetShaderShadowBias(), Light::kDefaultShadowBias);
+    EXPECT_FLOAT_EQ(sun.GetShaderNormalBias(), Light::kDefaultNormalBias);
+    auto& spot = s.CreateGameObject("Spot").AddComponent<SpotLight>();
+    spot.shadowStrength = 3.0f; // skonczone, ale poza zakresem -> obciete
+    spot.shadowBias = -1.0f;
+    EXPECT_FLOAT_EQ(spot.GetShaderShadowStrength(), 1.0f);
+    EXPECT_FLOAT_EQ(spot.GetShaderShadowBias(), 0.0f);
 }

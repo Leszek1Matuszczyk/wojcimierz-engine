@@ -4,6 +4,7 @@
 //  prowadzi każdy nasz wskaźnik ku właściwej pamięci.
 // ============================================================
 #include "render/Renderer.h"
+#include "render/detail/FloatGuard.h"
 #include "render/Camera.h"
 #include "render/Material.h"
 #include "render/Mesh.h"
@@ -20,6 +21,7 @@ namespace wz {
 Renderer::Renderer(rhi::Device& device) : device_(&device) {}
 
 Renderer::~Renderer() {
+    render_detail::ForgetNonFiniteWarnings(this);
     device_->DestroyBuffer(lightBuffer_);
     device_->DestroyRenderTarget(dirShadow_.target);
     for (auto& m : spotShadows_) device_->DestroyRenderTarget(m.target);
@@ -100,13 +102,19 @@ int Renderer::Render(const Scene& scene, rhi::RenderTargetHandle target, int wid
         if (settings.shadows && !lights.directional.empty() && lights.directional.front()->castShadows) {
             const DirectionalLight& d = *lights.directional.front();
             EnsureShadowMap(dirShadow_, settings.shadowMapSize);
+            // Straz NaN/Inf ustawien (raz na Renderer) - Wojcimierz nie wpusci NaN do macierzy swiatla.
+            const RenderSettings defaults;
+            const float shadowDistance = render_detail::SanitizeFloatOnce(
+                settings.shadowDistance, defaults.shadowDistance, this, "Renderer", "RenderSettings.shadowDistance");
+            const float casterMargin = render_detail::SanitizeFloatOnce(
+                settings.shadowCasterMargin, defaults.shadowCasterMargin, this, "Renderer", "RenderSettings.shadowCasterMargin");
             const shadows::LightSpace ls = shadows::FitDirectionalShadow(
-                d.transform().Forward(), shadows::CameraFrustumSlice(*cam, aspect, settings.shadowDistance),
-                dirShadow_.size, settings.shadowCasterMargin);
+                d.transform().Forward(), shadows::CameraFrustumSlice(*cam, aspect, shadowDistance),
+                dirShadow_.size, casterMargin);
             RenderShadowMap(scene, dirShadow_, ls.viewProjection);
             dirShadowMatrix = ls.viewProjection;
-            dirShadowParams = {1.0f, std::clamp(d.shadowStrength, 0.0f, 1.0f), std::max(d.shadowBias, 0.0f),
-                               std::max(d.normalBias, 0.0f) * ls.texelWorldSize};
+            dirShadowParams = {1.0f, d.GetShaderShadowStrength(), d.GetShaderShadowBias(),
+                               d.GetShaderNormalBias() * ls.texelWorldSize};
         }
         int spotSlot = 0;
         for (std::size_t i = 0; settings.shadows && i < lights.spots.size() && i < static_cast<std::size_t>(lighting::kMaxSpotLights) &&
@@ -117,12 +125,13 @@ int Renderer::Render(const Scene& scene, rhi::RenderTargetHandle target, int wid
             ShadowMap& map = spotShadows_[spotSlot];
             EnsureShadowMap(map, settings.spotShadowMapSize);
             const shadows::LightSpace ls = shadows::SpotShadow(s.transform().GetPosition(), s.transform().Forward(),
-                                                               s.outerAngle, s.range, map.size);
+                                                               s.GetShaderOuterAngle(), s.GetShaderRange(), map.size);
             RenderShadowMap(scene, map, ls.viewProjection);
             spotShadowMatrix[spotSlot] = ls.viewProjection;
             // normalBias na jednostke odleglosci: texelWorldSize liczony jest w odleglosci range/2.
-            spotShadowParams[spotSlot] = {1.0f, std::clamp(s.shadowStrength, 0.0f, 1.0f), std::max(s.shadowBias, 0.0f),
-                                          std::max(s.normalBias, 0.0f) * ls.texelWorldSize / (0.5f * std::max(s.range, 1e-3f))};
+            spotShadowParams[spotSlot] = {1.0f, s.GetShaderShadowStrength(), s.GetShaderShadowBias(),
+                                          s.GetShaderNormalBias() * ls.texelWorldSize /
+                                              (0.5f * std::max(s.GetShaderRange(), 1e-3f))};
             block.spots[i].cosInner.y = static_cast<float>(spotSlot);
             ++spotSlot;
         }
@@ -199,7 +208,7 @@ int Renderer::Render(const Scene& scene, rhi::RenderTargetHandle target, int wid
                 device_->SetUniform(sh, "u_BaseColor", mat->GetShaderBaseColor());
                 device_->SetUniform(sh, "u_Metallic", mat->GetShaderMetallic());
                 device_->SetUniform(sh, "u_Roughness", mat->GetShaderRoughness());
-                device_->SetUniform(sh, "u_Emissive", mat->emissive);
+                device_->SetUniform(sh, "u_Emissive", mat->GetShaderEmissive());
                 device_->SetUniform(sh, "u_ReceiveShadows", r.receiveShadows ? 1.0f : 0.0f);
                 device_->SetUniform(sh, "u_ShadowPcfRadius", std::clamp(settings.shadowPcfRadius, 0, 2));
                 device_->SetUniform(sh, "u_DirShadowMatrix", dirShadowMatrix);
