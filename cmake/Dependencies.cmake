@@ -27,6 +27,14 @@ FetchContent_Declare(stb
   GIT_REPOSITORY https://github.com/nothings/stb.git
   GIT_TAG 003501f6d7a8668ce8b6d875e34dd97ad0d5d5b5)
 
+# --- nlohmann/json (zapis i odczyt scen) ---
+set(JSON_BuildTests OFF CACHE INTERNAL "")
+set(JSON_Install OFF CACHE INTERNAL "")
+FetchContent_Declare(nlohmann_json
+  URL https://github.com/nlohmann/json/releases/download/v3.11.3/json.tar.xz
+  URL_HASH SHA256=d6c65aca6b1ed68e7a182f4757257b107ae403032760ed6ef121c9d55e81757d)
+FetchContent_MakeAvailable(nlohmann_json)
+
 # stb nie ma CMakeLists.txt - MakeAvailable tylko pobiera zrodla (zgodne z CMP0169).
 FetchContent_MakeAvailable(glfw glm stb)
 

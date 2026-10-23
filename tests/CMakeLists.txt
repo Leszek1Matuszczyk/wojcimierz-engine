@@ -9,8 +9,9 @@ add_executable(wz_unit_tests
   test_input.cpp
   test_mesh_data.cpp
   test_uuid.cpp
-  test_reflection.cpp)
-target_link_libraries(wz_unit_tests PRIVATE wz_core GTest::gtest_main)
+  test_reflection.cpp
+  test_scene_serializer.cpp)
+target_link_libraries(wz_unit_tests PRIVATE wz_core wz_serialization GTest::gtest_main)
 if(MSVC)
   target_compile_options(wz_unit_tests PRIVATE /utf-8)
 endif()
