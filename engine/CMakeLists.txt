@@ -1,5 +1,6 @@
 # ---------------------------------------------------------------------------
-# wz_core: rdzen, scena, wejscie (abstrakcja), geometria CPU i kamera.
+# wz_core: rdzen, scena, wejscie (abstrakcja), geometria CPU, kamera,
+# komponenty swiatel, zbieranie swiatel i parametry materialow (bez GPU).
 # Bez zaleznosci od GPU ani okna - testy jednostkowe dzialaja na kazdym serwerze CI.
 # ---------------------------------------------------------------------------
 add_library(wz_core STATIC
@@ -13,7 +14,10 @@ add_library(wz_core STATIC
   scene/Scene.cpp
   platform/Input.cpp
   render/MeshData.cpp
-  render/Camera.cpp)
+  render/Camera.cpp
+  render/Light.cpp
+  render/Lighting.cpp
+  render/Material.cpp)
 target_include_directories(wz_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(wz_core PUBLIC glm::glm)
 target_compile_definitions(wz_core PUBLIC GLM_ENABLE_EXPERIMENTAL)
@@ -36,6 +40,7 @@ add_library(wz_engine STATIC
   render/RHI.cpp
   render/gl/GLDevice.cpp
   render/Shader.cpp
+  render/Texture.cpp
   render/Mesh.cpp
   render/MeshRenderer.cpp
   render/Renderer.cpp
