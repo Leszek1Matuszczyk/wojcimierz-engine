@@ -38,9 +38,14 @@ protected:
     float LimitExtent(double scaled, const char* what) const;
     float LimitOffset(double scaled, const char* what) const;
     glm::vec3 CenterOf(const glm::vec3& sanitizedScale) const;
+    // Wywołaj na początku i na końcu BuildShape. Gdy wymiary wrócą do zakresu, kasujemy flagę
+    // ostrzeżenia, więc kolejne wyjście poza zakres znów ostrzeże.
+    void BeginLimits() const { clippedThisBuild_ = false; }
+    void EndLimits() const { if (!clippedThisBuild_) warnedExtent_ = false; }
 
 private:
     mutable bool warnedExtent_ = false;
+    mutable bool clippedThisBuild_ = false;
     void WarnExtent(const char* what, double v) const;
 
 public:

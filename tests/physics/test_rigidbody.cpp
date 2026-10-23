@@ -254,3 +254,23 @@ TEST(Rigidbody, TinyShapeGetsPositiveMinimum) {
     sph.radius = 0.0f;
     EXPECT_FLOAT_EQ(sph.BuildShape(glm::vec3(1.0f)).radius, Collider::kMinShapeExtent);
 }
+
+// Po powrocie do poprawnego zakresu kolejne przekroczenie znowu ostrzega (uwaga testerów do #23).
+TEST(Rigidbody, ExtentWarningRearmsAfterReturningToRange) {
+    Scene s;
+    auto& go = s.CreateGameObject("Kula");
+    auto& sph = go.AddComponent<SphereCollider>();
+    auto count = [&] {
+        testing::internal::CaptureStderr();
+        (void)sph.BuildShape(glm::vec3(1.0f));
+        const std::string e = testing::internal::GetCapturedStderr();
+        return e.find("po skali") != std::string::npos;
+    };
+    sph.radius = 1e30f;
+    EXPECT_TRUE(count());
+    EXPECT_FALSE(count()); // raz na collider
+    sph.radius = 1.0f;
+    EXPECT_FALSE(count());
+    sph.radius = 1e30f;
+    EXPECT_TRUE(count()); // znowu ostrzega
+}
