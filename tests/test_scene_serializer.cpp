@@ -43,10 +43,19 @@ public:
 
 class Unreflected : public wz::Component {};
 
+// Surowe pola bez żadnej walidacji w setterach (tylko dla testów): jedyną zaporą przed
+// NaN/Inf w pliku jest sam serializer.
+class RawFloats : public wz::Component {
+public:
+    float value = 0.0f;
+    glm::vec3 vec{0.0f};
+};
+
 } // namespace test_serializer
 
 REFLECT(test_serializer::Body, FIELD(mass), FIELD(bodyType), FIELD(velocity), FIELD(tag), FIELD(follow),
         FIELD(material))
+REFLECT(test_serializer::RawFloats, FIELD(value), FIELD(vec))
 
 using namespace test_serializer;
 using nlohmann::json;
@@ -355,17 +364,6 @@ TEST(SceneSerializer, NonFiniteFloatOnSaveIsSerializationErrorWithPath) {
     f.childA->GetComponent<Body>()->velocity.y = std::numeric_limits<float>::quiet_NaN();
     EXPECT_NE(ThrowMessage([&] { SceneSerializer::SerializeScene(f.scene); }).find("Body.velocity[1]"),
               std::string::npos);
-    // Transform: od #21 setter sam odrzuca NaN/Inf, więc do zapisu nie dojdzie nieskończona wartość.
-    // Test działa przed i po #21: albo setter odrzucił (poza skończona, zapis przechodzi),
-    // albo wartość weszła i zapis musi dać SerializationError ze ścieżką do pola.
-    Fixture g;
-    g.root->transform().SetLocalPosition({0, std::numeric_limits<float>::infinity(), 0});
-    if (std::isfinite(g.root->transform().GetLocalPosition().y)) {
-        EXPECT_NO_THROW(SceneSerializer::SerializeSubtree(*g.root));
-    } else {
-        EXPECT_NE(ThrowMessage([&] { SceneSerializer::SerializeSubtree(*g.root); }).find("Transform.position[1]"),
-                  std::string::npos);
-    }
 }
 
 TEST(SceneSerializer, FailedSaveLeavesExistingFileUntouched) {
@@ -538,4 +536,32 @@ TEST(SceneSerializer, SkippedComponentsAreReportedToCaller) {
     EXPECT_EQ(subtree, warnings) << "ChildA jest w poddrzewie Root";
     EXPECT_EQ(saved, warnings);
     EXPECT_NE(err.find(warnings[0]), std::string::npos) << "stderr zostaje";
+}
+
+// Twardy test ścieżki serializera: pole bez walidacji, NaN i osobno ±Inf, dokładny komunikat.
+TEST(SceneSerializer, RawNonFiniteFloatIsRejectedWithExactPath) {
+    struct Case {
+        float v;
+        const char* kind;
+    };
+    const Case cases[] = {{std::numeric_limits<float>::quiet_NaN(), "NaN"},
+                          {std::numeric_limits<float>::infinity(), "Inf"},
+                          {-std::numeric_limits<float>::infinity(), "Inf"}};
+    for (const Case& c : cases) {
+        Scene scene("S");
+        GameObject& go = scene.CreateGameObject("Raw");
+        go.AddComponent<RawFloats>().value = c.v;
+        const std::string expected = "obiekt " + go.GetId().ToString() + " ('Raw'), RawFloats.value: wartosc " +
+                                     c.kind + " nie moze trafic do pliku sceny";
+        EXPECT_EQ(ThrowMessage([&] { SceneSerializer::SerializeScene(scene); }), expected);
+        EXPECT_EQ(ThrowMessage([&] { SceneSerializer::SerializeSubtree(go); }), expected);
+    }
+    for (const Case& c : cases) {
+        Scene scene("S");
+        GameObject& go = scene.CreateGameObject("Raw");
+        go.AddComponent<RawFloats>().vec = {1.0f, 2.0f, c.v};
+        const std::string expected = "obiekt " + go.GetId().ToString() + " ('Raw'), RawFloats.vec[2]: wartosc " +
+                                     c.kind + " nie moze trafic do pliku sceny";
+        EXPECT_EQ(ThrowMessage([&] { SceneSerializer::SerializeScene(scene); }), expected);
+    }
 }
