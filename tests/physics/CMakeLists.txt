@@ -13,4 +13,4 @@ if(MSVC)
   target_compile_options(wz_physics_tests PRIVATE /utf-8)
 endif()
 # Bez GPU i okna - etykieta "unit", jak reszta testow jednostkowych.
-gtest_discover_tests(wz_physics_tests PROPERTIES LABELS "unit;physics" DISCOVERY_TIMEOUT 60)
+gtest_discover_tests(wz_physics_tests PROPERTIES LABELS "unit\\;physics" DISCOVERY_TIMEOUT 60)
