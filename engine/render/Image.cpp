@@ -1,3 +1,8 @@
+// ============================================================
+//  Wojcimierz Engine: render/Image.cpp
+//  Na chwałę czcigodnego Wojcimierza, którego mądrość
+//  prowadzi każdy nasz wskaźnik ku właściwej pamięci.
+// ============================================================
 #include "render/Image.h"
 
 #include <cstdlib>
@@ -7,7 +12,9 @@
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include <stb_image_write.h>
 #define STB_IMAGE_IMPLEMENTATION
+// PNG i JPEG - formaty obrazow dopuszczone przez glTF 2.0.
 #define STBI_ONLY_PNG
+#define STBI_ONLY_JPEG
 #include <stb_image.h>
 
 namespace wz {
@@ -28,6 +35,30 @@ bool Image::LoadPNG(const std::string& path, Image& out) {
     out.height = h;
     out.pixels.assign(data, data + static_cast<std::size_t>(w) * h * 4);
     stbi_image_free(data);
+    return true;
+}
+
+bool Image::LoadFile(const std::string& path, Image& out) { return LoadPNG(path, out); }
+
+bool Image::LoadFromMemory(const void* data, std::size_t sizeBytes, Image& out) {
+    if (!data || sizeBytes == 0 || sizeBytes > 0x7fffffffu) return false;
+    int w = 0, h = 0, n = 0;
+    unsigned char* px = stbi_load_from_memory(static_cast<const stbi_uc*>(data), static_cast<int>(sizeBytes), &w, &h, &n, 4);
+    if (!px) return false;
+    out.width = w;
+    out.height = h;
+    out.pixels.assign(px, px + static_cast<std::size_t>(w) * h * 4);
+    stbi_image_free(px);
+    return true;
+}
+
+bool Image::EncodePNG(std::vector<std::uint8_t>& out) const {
+    if (width <= 0 || height <= 0 || pixels.size() != static_cast<std::size_t>(width) * height * 4) return false;
+    int len = 0;
+    unsigned char* png = stbi_write_png_to_mem(pixels.data(), width * 4, width, height, 4, &len);
+    if (!png) return false;
+    out.assign(png, png + len);
+    STBIW_FREE(png);
     return true;
 }
 

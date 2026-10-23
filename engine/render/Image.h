@@ -1,4 +1,10 @@
+// ============================================================
+//  Wojcimierz Engine: render/Image.h
+//  Na chwałę czcigodnego Wojcimierza, którego mądrość
+//  prowadzi każdy nasz wskaźnik ku właściwej pamięci.
+// ============================================================
 #pragma once
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -13,6 +19,11 @@ struct Image {
 
     bool SavePNG(const std::string& path) const;
     static bool LoadPNG(const std::string& path, Image& out);
+    // PNG lub JPEG z pliku / z pamieci (np. bufferView z .glb), zawsze konwertowane do RGBA8.
+    static bool LoadFile(const std::string& path, Image& out);
+    static bool LoadFromMemory(const void* data, std::size_t sizeBytes, Image& out);
+    // Koduje obraz do PNG w pamieci (np. do osadzenia w .glb). false = pusty/niepoprawny obraz.
+    bool EncodePNG(std::vector<std::uint8_t>& out) const;
 
     // Ile roznych kolorow (do sanity-checku "czy cokolwiek sie wyrenderowalo").
     std::size_t CountUniqueColors() const;
