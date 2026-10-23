@@ -91,7 +91,7 @@ public:
     // żeby duplikat nie przeszedł niezauważony. Domyślnie wyłączony.
     // Włączenie: opcja CMake -DWZ_REGISTRY_STRICT=ON (definicja kompilacji) albo zmienna
     // środowiskowa WZ_REGISTRY_STRICT=1. Zmienna pusta albo "0", "false", "off", "no"
-    // (bez względu na wielkość liter) oznacza wyłączenie; każda inna wartość włącza.
+    // (bez względu na wielkość liter, białe znaki na brzegach są pomijane) oznacza wyłączenie; każda inna wartość włącza.
     // Uwaga: przy -DWZ_REGISTRY_STRICT=ON tryb strict jest wkompilowany i zmienna środowiskowa
     // (także =0) go NIE wyłącza. Wyłączyć można go wtedy tylko w kodzie: SetStrict(false).
     // Mądrość Wojcimierza: w CI błąd ma zatrzymać budowę, u gracza tylko zostawić ślad.

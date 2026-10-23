@@ -48,7 +48,11 @@ bool ComponentRegistry::DefaultStrict() {
 #else
     const char* env = std::getenv("WZ_REGISTRY_STRICT");
     if (!env || !*env) return false;
-    std::string v(env);
+    std::string_view raw(env);
+    const auto first = raw.find_first_not_of(" \t\r\n");
+    if (first == std::string_view::npos) return false; // same białe znaki = puste
+    raw = raw.substr(first, raw.find_last_not_of(" \t\r\n") - first + 1);
+    std::string v(raw);
     for (char& ch : v) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
     return !(v == "0" || v == "false" || v == "off" || v == "no");
 #endif
