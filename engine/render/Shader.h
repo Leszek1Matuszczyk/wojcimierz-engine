@@ -28,7 +28,8 @@ public:
     // swiatla z bloku LightBlock (std140, binding 0 - patrz render/Lighting.h),
     // uniformy u_Model, u_ViewProj, u_CameraPos, u_BaseColor, u_Metallic, u_Roughness,
     // u_Emissive oraz sampler u_BaseColorTex (jednostka Material::kBaseColorTextureSlot).
-    // Wynik: kolor liniowy -> tone mapping Reinhard -> gamma sRGB (cel RGBA8).
+    // Wynik: kolor LINIOWY po tone mappingu Reinhard - kodowanie do sRGB robi cel GL_SRGB8_ALPHA8
+    // z GL_FRAMEBUFFER_SRGB (jedna sciezka dla tla i obiektow, bez recznej gammy w shaderach).
     static std::shared_ptr<Shader> CreateDefaultPBR(rhi::Device& device);
 
 private:

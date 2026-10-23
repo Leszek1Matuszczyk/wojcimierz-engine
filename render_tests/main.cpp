@@ -300,6 +300,26 @@ std::vector<TestScene> MakeScenes() {
                      const glm::u8vec4 top = PixelAtWorld(img, s, {0.0f, 0.5f, 0.0f});
                      if (!(front.r > 150 && front.g < 60)) { why = "przod nie jest czerwony"; return false; }
                      if (!(top.g > 150 && top.r < 60)) { why = "gora nie jest zielona"; return false; }
+                     // B1: shader oddaje wartosc liniowa (Reinhard 4/(4+1) = 0.8), sRGB koduje cel raz:
+                     // ~231. Reczna gamma w shaderze dalaby podwojne kodowanie (~243).
+                     const float lin = 4.0f / (4.0f + 1.0f);
+                     const float enc = lin <= 0.0031308f ? 12.92f * lin : 1.055f * std::pow(lin, 1.0f / 2.4f) - 0.055f;
+                     const int expected = static_cast<int>(enc * 255.0f + 0.5f);
+                     if (std::abs(int(front.r) - expected) > 3 || std::abs(int(top.g) - expected) > 3) {
+                         why = "emisja zakodowana nie raz: przod.r=" + std::to_string(front.r) + " gora.g=" +
+                               std::to_string(top.g) + ", oczekiwane ~" + std::to_string(expected);
+                         return false;
+                     }
+                     // B2: tlo (clear) i obiekty w tej samej klatce ida ta sama sciezka (cel sRGB +
+                     // GL_FRAMEBUFFER_SRGB) - kolor tla kamery tez zakodowany dokladnie raz.
+                     const glm::vec4 bgLin = s.FindFirst<Camera>()->backgroundColor;
+                     const std::uint8_t* corner = img.pixels.data();
+                     for (int c = 0; c < 3; ++c)
+                         if (std::abs(int(corner[c]) - int(LinearToSRGB8(bgLin[c]))) > 2) {
+                             why = "tlo nie jest zakodowane raz (kanal " + std::to_string(c) + "=" +
+                                   std::to_string(corner[c]) + ")";
+                             return false;
+                         }
                      return true;
                  }});
     return v;
