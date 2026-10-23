@@ -8,6 +8,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 option(WZ_BUILD_TESTS "Buduj testy jednostkowe (GoogleTest)" ON)
 option(WZ_BUILD_SANDBOX "Buduj aplikacje sandbox" ON)
+option(WZ_BUILD_EDITOR "Buduj edytor (Dear ImGui)" ON)
 option(WZ_BUILD_RENDER_TESTS "Buduj render_tests (zrzuty scen testowych)" ON)
 
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
@@ -17,6 +18,11 @@ endif()
 include(cmake/Dependencies.cmake)
 add_subdirectory(third_party/glad)
 add_subdirectory(engine)
+
+# Rdzen edytora (bez UI) budujemy zawsze, gdy sa testy, bo testy jednostkowe go sprawdzaja.
+if(WZ_BUILD_EDITOR OR WZ_BUILD_TESTS)
+  add_subdirectory(editor)
+endif()
 
 if(WZ_BUILD_SANDBOX)
   add_subdirectory(sandbox)
