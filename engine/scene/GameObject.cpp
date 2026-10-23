@@ -5,6 +5,8 @@
 #include "scene/GameObject.h"
 #include "scene/Scene.h"
 
+#include <stdexcept>
+
 namespace wz {
 
 GameObject::GameObject(Scene& scene, std::string name) : scene_(&scene), name_(std::move(name)) {
@@ -24,6 +26,16 @@ bool GameObject::IsActiveInHierarchy() const {
     for (const Transform* t = transform_; t; t = t->GetParent())
         if (!t->gameObject().activeSelf_) return false;
     return true;
+}
+
+Component& GameObject::AddComponent(std::unique_ptr<Component> component) {
+    if (!component) throw std::invalid_argument("GameObject::AddComponent: pusty komponent");
+    if (dynamic_cast<Transform*>(component.get()))
+        throw std::invalid_argument("GameObject::AddComponent: Transform jest dodawany automatycznie");
+    if (component->owner_) throw std::invalid_argument("GameObject::AddComponent: komponent ma juz wlasciciela");
+    Component& ref = *component;
+    Attach(std::move(component));
+    return ref;
 }
 
 void GameObject::Attach(std::unique_ptr<Component> comp) {

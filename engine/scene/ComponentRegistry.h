@@ -12,6 +12,7 @@
 #include <functional>
 #include <glm/glm.hpp>
 #include <glm/gtc/quaternion.hpp>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <typeindex>
@@ -65,6 +66,11 @@ struct TypeInfo {
     // Dodaje komponent do obiektu i go zwraca. Dla Transform zwraca istniejący Transform.
     // Puste, gdy typu nie da się utworzyć domyślnym konstruktorem.
     std::function<Component*(GameObject&)> addTo;
+    // Tworzy komponent BEZ dołączania do obiektu (Awake jeszcze nie wywołane).
+    // Serializacja najpierw ustawia pola, a dopiero potem dołącza komponent przez
+    // GameObject::AddComponent(std::unique_ptr<Component>), więc Awake widzi wczytane
+    // wartości, tak jak w Unity. Puste dla Transform i typów bez domyślnego konstruktora.
+    std::function<std::unique_ptr<Component>()> create;
 
     const FieldInfo* FindField(std::string_view fieldName) const;
 };

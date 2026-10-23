@@ -55,6 +55,10 @@ public:
         return ref;
     }
 
+    // Dołącza gotowy komponent (np. utworzony przez TypeInfo::create i wypełniony
+    // przez serializację) i wywołuje jego Awake(). Transform nie jest dozwolony.
+    Component& AddComponent(std::unique_ptr<Component> component);
+
     template <typename T>
     T* GetComponent() const {
         for (const auto& c : components_)
