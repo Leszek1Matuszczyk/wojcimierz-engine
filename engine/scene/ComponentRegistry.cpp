@@ -5,6 +5,7 @@
 // ============================================================
 #include "scene/ComponentRegistry.h"
 
+#include "core/TypeName.h"
 #include "scene/Component.h"
 
 #include <algorithm>
@@ -13,9 +14,6 @@
 #include <cstdlib>
 #include <memory>
 #include <string_view>
-#if defined(__GNUG__)
-#include <cxxabi.h>
-#endif
 
 namespace wz {
 
@@ -79,16 +77,7 @@ ComponentRegistry& ComponentRegistry::Get() {
 
 namespace {
 
-std::string Demangle(const char* mangled) {
-#if defined(__GNUG__)
-    int status = 0;
-    std::unique_ptr<char, void (*)(void*)> out(abi::__cxa_demangle(mangled, nullptr, nullptr, &status), std::free);
-    if (status == 0 && out) return out.get();
-#endif
-    return mangled;
-}
-
-std::string CppNameOf(const TypeInfo& t) { return t.cppName.empty() ? Demangle(t.type.name()) : t.cppName; }
+std::string CppNameOf(const TypeInfo& t) { return t.cppName.empty() ? DemangleTypeName(t.type.name()) : t.cppName; }
 
 } // namespace
 

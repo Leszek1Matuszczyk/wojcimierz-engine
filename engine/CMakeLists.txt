@@ -8,6 +8,7 @@ add_library(wz_core STATIC
   core/UUID.cpp
   core/FixedStepSystem.cpp
   core/Math.cpp
+  core/TypeName.cpp
   scene/Component.cpp
   scene/ComponentRegistry.cpp
   scene/Transform.cpp
