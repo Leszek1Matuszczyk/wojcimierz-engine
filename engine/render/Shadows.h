@@ -15,6 +15,8 @@
 //
 // Spot: perspektywa o kacie 2 * outerAngle (+ margines), near = range * kSpotNearFactor, far = range.
 
+#include "render/detail/FloatGuard.h"
+
 #include <array>
 #include <glm/glm.hpp>
 
@@ -56,6 +58,20 @@ LightSpace FitDirectionalShadow(const glm::vec3& lightDirection, const FrustumCo
 // (shader skaluje go liniowo z odlegloscia).
 LightSpace SpotShadow(const glm::vec3& position, const glm::vec3& direction, float outerAngleDeg, float range,
                       int mapSize);
+
+// Zakresy ustawien cieni (RenderSettings). Wartosci skonczone, ale absurdalne (FLT_MAX) dalyby
+// macierz ortho z Inf/NaN - przycinamy je po sanityzacji NaN/Inf.
+inline constexpr float kMinShadowDistance = 0.1f;
+inline constexpr float kMaxShadowDistance = 1e5f;
+inline constexpr float kMaxCasterMargin = 1e5f;
+
+// Straz ustawien cieni Renderera: NaN/Inf -> ostatnia dobra (bez niej domyslna), potem clamp.
+// Ostrzezenia raz na wlasciciela (owner). Stan "ostatniej dobrej" nie jest serializowany.
+struct ShadowSettingsGuard {
+    render_detail::LastGoodFloat distance, casterMargin;
+    float Distance(float value, float fallback, const void* owner);
+    float CasterMargin(float value, float fallback, const void* owner);
+};
 
 // Wektor "gora" dla lookAt nierownolegly do kierunku (swiatlo w dol/do gory).
 glm::vec3 StableUp(const glm::vec3& direction);

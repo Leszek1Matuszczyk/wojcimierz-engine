@@ -87,7 +87,7 @@ private:
     std::shared_ptr<Texture> whiteTexture_;
     RenderStats stats_;
     // Ostatnie skonczone wartosci ustawien cieni (NaN/Inf -> ostatnia dobra, bez skokow cienia).
-    render_detail::LastGoodFloat lastGoodShadowDistance_, lastGoodCasterMargin_;
+    shadows::ShadowSettingsGuard shadowSettingsGuard_; // ostatnie dobre + zakresy ustawien cieni
 };
 
 } // namespace wz

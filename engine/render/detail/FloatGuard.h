@@ -49,6 +49,14 @@ glm::vec3 SanitizeVec3Once(const glm::vec3& value, const glm::vec3& fallback, co
 glm::vec4 SanitizeVec4Once(const glm::vec4& value, const glm::vec4& fallback, const void* object,
                            const std::string& objectName, const char* field);
 
+// --- Czesc 2b: wartosci skonczone, ale absurdalne (np. FLT_MAX - jak fizyka w #22) ---
+// Clamp do [lo, hi] z ostrzezeniem RAZ na obiekt (osobno od ostrzezen NaN/Inf). Wartosc w
+// zakresie (np. intensity 0) przechodzi bez ostrzezenia. Wolac PO sanityzacji NaN/Inf.
+float ClampOnce(float value, float lo, float hi, const void* object, const std::string& objectName, const char* field);
+glm::vec3 ClampVec3Once(const glm::vec3& value, float lo, float hi, const void* object, const std::string& objectName,
+                        const char* field);
+int OutOfRangeWarningCount();
+
 // --- Czesc 3: "ostatnia dobra wartosc" (preferencja testerow, jak w audio) ---
 // Pole, ktore stalo sie NaN/Inf, zachowuje OSTATNIA skonczona wartosc zamiast skakac do domyslnej
 // (bez naglych blyskow jasnosci). Domyslna tylko, gdy dobrej wartosci jeszcze nie bylo.

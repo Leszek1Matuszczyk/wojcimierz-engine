@@ -105,12 +105,10 @@ int Renderer::Render(const Scene& scene, rhi::RenderTargetHandle target, int wid
             // Straz NaN/Inf ustawien (ostrzezenie raz na Renderer, ostatnia dobra wartosc, a bez niej
             // domyslna) - Wojcimierz nie wpusci NaN do macierzy swiatla.
             const RenderSettings defaults;
-            const float shadowDistance = render_detail::SanitizeFloatKeepLast(
-                settings.shadowDistance, lastGoodShadowDistance_, defaults.shadowDistance, this, "Renderer",
-                "RenderSettings.shadowDistance");
-            const float casterMargin = render_detail::SanitizeFloatKeepLast(
-                settings.shadowCasterMargin, lastGoodCasterMargin_, defaults.shadowCasterMargin, this, "Renderer",
-                "RenderSettings.shadowCasterMargin");
+            // Potem clamp do [kMinShadowDistance, kMaxShadowDistance] / [0, kMaxCasterMargin].
+            const float shadowDistance = shadowSettingsGuard_.Distance(settings.shadowDistance, defaults.shadowDistance, this);
+            const float casterMargin =
+                shadowSettingsGuard_.CasterMargin(settings.shadowCasterMargin, defaults.shadowCasterMargin, this);
             const shadows::LightSpace ls = shadows::FitDirectionalShadow(
                 d.transform().Forward(), shadows::CameraFrustumSlice(*cam, aspect, shadowDistance),
                 dirShadow_.size, casterMargin);
@@ -182,7 +180,7 @@ int Renderer::Render(const Scene& scene, rhi::RenderTargetHandle target, int wid
                 device_->BindShader(sh);
                 device_->SetUniform(sh, "u_Model", model);
                 device_->SetUniform(sh, "u_ViewProj", viewProj);
-                device_->SetUniform(sh, "u_Tint", r.color);
+                device_->SetUniform(sh, "u_Tint", r.GetShaderColor());
                 device_->SetUniform(sh, "u_LightDir", settings.lightDirection);
                 device_->SetUniform(sh, "u_Ambient", settings.ambient);
                 device_->SetUniform(sh, "u_Unlit", r.unlit ? 1.0f : 0.0f);
