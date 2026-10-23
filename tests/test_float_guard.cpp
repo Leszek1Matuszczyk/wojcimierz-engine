@@ -131,6 +131,121 @@ TEST_F(FloatGuardTest, PackedLightBlockIsFiniteWithNonFiniteParameters) {
     EXPECT_EQ(guard::NonFiniteWarningCount(), 3);
 }
 
+// Wartosci skonczone, ale absurdalne (jak fizyka w #22): FLT_MAX nie moze dac Inf po
+// mnozeniu (color*intensity, range^2, d^2) ani stozka szerszego niz polsfera.
+TEST_F(FloatGuardTest, HugeFiniteLightValuesDoNotProduceInf) {
+    const float kHuge = std::numeric_limits<float>::max();
+    Scene s;
+    auto& sun = s.CreateGameObject("Sun").AddComponent<DirectionalLight>();
+    sun.intensity = kHuge;
+    sun.color = glm::vec3(kHuge);
+    GameObject& lampGo = s.CreateGameObject("Lamp");
+    lampGo.transform().SetPosition({1, 0, 0});
+    auto& lamp = lampGo.AddComponent<PointLight>();
+    lamp.range = kHuge;
+    lamp.intensity = kHuge;
+    lamp.color = {kHuge, 1.0f, 1.0f};
+    GameObject& farGo = s.CreateGameObject("FarSpot");
+    farGo.transform().SetPosition({kHuge, kHuge, 0}); // odleglosc od kamery > FLT_MAX w float
+    auto& spot = farGo.AddComponent<SpotLight>();
+    spot.range = kHuge;
+    spot.intensity = kHuge;
+    spot.innerAngle = kHuge;
+    spot.outerAngle = kHuge;
+
+    EXPECT_FLOAT_EQ(lamp.GetShaderRange(), kMaxLightRange);
+    EXPECT_FLOAT_EQ(lamp.GetShaderIntensity(), Light::kMaxIntensity);
+    EXPECT_FLOAT_EQ(lamp.GetShaderColor().r, Light::kMaxColor);
+    EXPECT_FLOAT_EQ(spot.GetShaderOuterAngle(), SpotLight::kMaxAngle);
+    EXPECT_FLOAT_EQ(spot.GetShaderInnerAngle(), SpotLight::kMaxAngle); // inner <= outer
+    const glm::vec3 rad = lamp.GetShaderRadiance();
+    EXPECT_TRUE(std::isfinite(rad.r) && std::isfinite(rad.g) && std::isfinite(rad.b));
+    EXPECT_FLOAT_EQ(rad.r, Light::kMaxColor * Light::kMaxIntensity);
+
+    // Tlumienie: range^2 / d^2 w double - skonczone nawet dla FLT_MAX podanego wprost.
+    for (float d : {0.0f, 1.0f, 1e20f, kHuge * 0.5f}) {
+        const float a = DistanceAttenuation(d, kHuge);
+        EXPECT_TRUE(std::isfinite(a)) << d;
+        EXPECT_GE(a, 0.0f) << d;
+    }
+    EXPECT_FLOAT_EQ(DistanceAttenuation(kNaN, 5.0f), 0.0f);
+    const float shaderRange = lamp.GetShaderRange();
+    const float worst = DistanceAttenuation(0.0f, shaderRange) * rad.r; // max tlumienia * max radiancji
+    EXPECT_TRUE(std::isfinite(worst));
+
+    const SpotCone cone = ComputeSpotCone(kHuge, kHuge);
+    EXPECT_TRUE(std::isfinite(cone.cosInner) && std::isfinite(cone.cosOuter));
+    EXPECT_GT(cone.cosOuter, 0.0f); // < 90 stopni
+    EXPECT_GE(cone.cosInner, cone.cosOuter);
+
+    const LightCollection lc = CollectLights(s, glm::vec3(0.0f));
+    ASSERT_EQ(lc.points.size(), 1u);
+    ASSERT_EQ(lc.spots.size(), 1u);
+    const GpuLightBlock b = PackLights(lc, glm::vec3(0.1f));
+    EXPECT_TRUE(AllFinite(b));
+    EXPECT_FLOAT_EQ(b.points[0].positionRange.w, kMaxLightRange);
+
+    EXPECT_EQ(guard::NonFiniteWarningCount(), 0); // wartosci byly skonczone
+    EXPECT_EQ(guard::OutOfRangeWarningCount(), 3); // raz na obiekt, mimo wielu zlych pol
+    (void)CollectLights(s, glm::vec3(0.0f));       // kolejna klatka - bez nowych ostrzezen
+    EXPECT_EQ(guard::OutOfRangeWarningCount(), 3);
+}
+
+TEST_F(FloatGuardTest, HugeEmissiveIsClamped) {
+    Material m;
+    m.emissive = {std::numeric_limits<float>::max(), 2.0f, -1.0f};
+    const glm::vec3 e = m.GetShaderEmissive();
+    EXPECT_FLOAT_EQ(e.r, Material::kMaxEmissive);
+    EXPECT_FLOAT_EQ(e.g, 2.0f);
+    EXPECT_FLOAT_EQ(e.b, 0.0f);
+    EXPECT_EQ(guard::OutOfRangeWarningCount(), 1);
+}
+
+TEST_F(FloatGuardTest, LightRangesClampWithoutWarningForValidValues) {
+    Scene s;
+    auto& off = s.CreateGameObject("Off").AddComponent<PointLight>();
+    off.intensity = 0.0f; // poprawne "wylaczone" swiatlo - bez ostrzezenia
+    EXPECT_FLOAT_EQ(off.GetShaderIntensity(), 0.0f);
+    EXPECT_EQ(guard::OutOfRangeWarningCount(), 0);
+
+    auto& neg = s.CreateGameObject("Neg").AddComponent<PointLight>();
+    off.range = 0.0f; // range 0 = swiatlo wylaczone (CollectLights pomija) - tez bez ostrzezenia
+    EXPECT_FLOAT_EQ(off.GetShaderRange(), 0.0f);
+    EXPECT_EQ(guard::OutOfRangeWarningCount(), 0);
+
+    neg.intensity = -5.0f;
+    neg.range = 1e-6f;
+    EXPECT_FLOAT_EQ(neg.GetShaderIntensity(), 0.0f);
+    EXPECT_FLOAT_EQ(neg.GetShaderRange(), kMinLightRange);
+    EXPECT_EQ(guard::OutOfRangeWarningCount(), 1);
+    auto& negRange = s.CreateGameObject("NegRange").AddComponent<PointLight>();
+    negRange.range = -3.0f;
+    EXPECT_FLOAT_EQ(negRange.GetShaderRange(), 0.0f);
+    EXPECT_EQ(guard::OutOfRangeWarningCount(), 2);
+
+    auto& sp = s.CreateGameObject("Wide").AddComponent<SpotLight>();
+    sp.outerAngle = 120.0f; // poza (0, 90)
+    sp.innerAngle = 100.0f; // inner > outer po przycieciu
+    EXPECT_FLOAT_EQ(sp.GetShaderOuterAngle(), SpotLight::kMaxAngle);
+    EXPECT_FLOAT_EQ(sp.GetShaderInnerAngle(), SpotLight::kMaxAngle);
+    sp.outerAngle = 0.0f;
+    sp.innerAngle = 20.0f;
+    EXPECT_FLOAT_EQ(sp.GetShaderOuterAngle(), SpotLight::kMinAngle);
+    EXPECT_FLOAT_EQ(sp.GetShaderInnerAngle(), SpotLight::kMinAngle);
+    EXPECT_EQ(guard::OutOfRangeWarningCount(), 3);
+
+    auto& ok = s.CreateGameObject("Ok").AddComponent<SpotLight>();
+    ok.innerAngle = 10.0f;
+    ok.outerAngle = 40.0f;
+    ok.range = 50.0f;
+    ok.intensity = 1e5f;
+    EXPECT_FLOAT_EQ(ok.GetShaderInnerAngle(), 10.0f);
+    EXPECT_FLOAT_EQ(ok.GetShaderOuterAngle(), 40.0f);
+    EXPECT_FLOAT_EQ(ok.GetShaderRange(), 50.0f);
+    EXPECT_FLOAT_EQ(ok.GetShaderIntensity(), 1e5f);
+    EXPECT_EQ(guard::OutOfRangeWarningCount(), 3);
+}
+
 TEST_F(FloatGuardTest, LightsWithNonFiniteTransformAreSkipped) {
     Scene s;
     GameObject& badPos = s.CreateGameObject("BadPos");

@@ -76,11 +76,11 @@ TEST(LightMath, SpotAttenuationDecreasesWithAngle) {
 }
 
 TEST(LightMath, SpotConeIsSanitized) {
-    // inner > outer -> inner obciete do outer; outer >= 90 -> 89 stopni.
+    // inner > outer -> inner obciete do outer; outer >= 90 -> SpotLight::kMaxAngle (89.9).
     const SpotCone a = ComputeSpotCone(50.0f, 30.0f);
     EXPECT_FLOAT_EQ(a.cosInner, a.cosOuter);
     const SpotCone b = ComputeSpotCone(10.0f, 120.0f);
-    EXPECT_NEAR(b.cosOuter, std::cos(glm::radians(89.0f)), 1e-6f);
+    EXPECT_NEAR(b.cosOuter, std::cos(glm::radians(SpotLight::kMaxAngle)), 1e-6f);
     EXPECT_GT(b.cosOuter, 0.0f);
     // Zdegenerowany stozek (inner == outer) nie dzieli przez zero.
     EXPECT_TRUE(std::isfinite(SpotAttenuation(a.cosOuter, a.cosInner, a.cosOuter)));

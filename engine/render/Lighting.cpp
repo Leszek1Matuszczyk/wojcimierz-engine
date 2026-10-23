@@ -15,6 +15,11 @@ namespace wz::lighting {
 namespace {
 
 float Luminance(const glm::vec3& c) { return 0.2126f * c.r + 0.7152f * c.g + 0.0722f * c.b; }
+// Odleglosc w double - pozycje FLT_MAX nie daja Inf/NaN w rankingu (Inf jest porzadkowalne, NaN nie).
+float SafeDistance(const glm::vec3& a, const glm::vec3& b) {
+    const double d = glm::length(glm::dvec3(a) - glm::dvec3(b));
+    return static_cast<float>(std::min(d, 3.0e38));
+}
 
 template <typename L>
 struct Candidate {
@@ -55,12 +60,12 @@ LightCollection CollectLights(const Scene& scene, const glm::vec3& cameraPositio
         // Straz NaN/Inf: swiatlo z nieskonczona pozycja/kierunkiem pomijamy (NaN zepsulby
         // tez sortowanie - porownania z NaN lamia strict weak ordering).
         if (!l.HasFiniteTransform() || !l.IsContributing()) return;
-        const float brightness = l.GetShaderIntensity() * Luminance(l.GetShaderColor());
+        const float brightness = Luminance(l.GetShaderRadiance()); // iloczyn liczony w double
         if (auto* d = dynamic_cast<DirectionalLight*>(&l)) {
             dirs.push_back({d, 0.0f, brightness});
             return;
         }
-        const float dist = glm::length(l.transform().GetPosition() - cameraPosition);
+        const float dist = SafeDistance(l.transform().GetPosition(), cameraPosition);
         if (auto* p = dynamic_cast<PointLight*>(&l)) {
             const float range = p->GetShaderRange();
             if (range <= 0.0f) return;
@@ -92,13 +97,13 @@ GpuLightBlock PackLights(const LightCollection& lights, const glm::vec3& ambient
         const DirectionalLight* d = lights.directional.front();
         b.counts.x = 1;
         b.directionalDirection = glm::vec4(d->transform().Forward(), 0.0f);
-        b.directionalColor = glm::vec4(d->GetShaderColor() * d->GetShaderIntensity(), 0.0f);
+        b.directionalColor = glm::vec4(d->GetShaderRadiance(), 0.0f);
     }
     const int np = std::min(static_cast<int>(lights.points.size()), kMaxPointLights);
     for (int i = 0; i < np; ++i) {
         const PointLight* p = lights.points[i];
         b.points[i].positionRange = glm::vec4(p->transform().GetPosition(), p->GetShaderRange());
-        b.points[i].colorIntensity = glm::vec4(p->GetShaderColor() * p->GetShaderIntensity(), 0.0f);
+        b.points[i].colorIntensity = glm::vec4(p->GetShaderRadiance(), 0.0f);
     }
     b.counts.y = np;
     const int ns = std::min(static_cast<int>(lights.spots.size()), kMaxSpotLights);
@@ -107,7 +112,7 @@ GpuLightBlock PackLights(const LightCollection& lights, const glm::vec3& ambient
         const SpotCone cone = ComputeSpotCone(s->GetShaderInnerAngle(), s->GetShaderOuterAngle());
         b.spots[i].positionRange = glm::vec4(s->transform().GetPosition(), s->GetShaderRange());
         b.spots[i].directionCosOuter = glm::vec4(s->transform().Forward(), cone.cosOuter);
-        b.spots[i].colorIntensity = glm::vec4(s->GetShaderColor() * s->GetShaderIntensity(), 0.0f);
+        b.spots[i].colorIntensity = glm::vec4(s->GetShaderRadiance(), 0.0f);
         b.spots[i].cosInner = glm::vec4(cone.cosInner, 0.0f, 0.0f, 0.0f);
     }
     b.counts.z = ns;
