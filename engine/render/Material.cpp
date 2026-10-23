@@ -33,7 +33,9 @@ glm::vec4 Material::GetShaderBaseColor() const {
 }
 
 glm::vec3 Material::GetShaderEmissive() const {
-    return guard::SanitizeVec3KeepLast(emissive, lastGood_.emissive, glm::vec3(0.0f), this, name, "emissive");
+    // Emisja HDR w [0, kMaxEmissive]: FLT_MAX * ekspozycja w shaderze dalaby Inf.
+    const glm::vec3 e = guard::SanitizeVec3KeepLast(emissive, lastGood_.emissive, glm::vec3(0.0f), this, name, "emissive");
+    return guard::ClampVec3Once(e, 0.0f, kMaxEmissive, this, name, "emissive");
 }
 
 int ResolveMaterialIndex(std::size_t submeshIndex, std::size_t materialCount) {

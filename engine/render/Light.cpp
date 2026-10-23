@@ -27,11 +27,23 @@ bool Light::IsContributing() const {
 }
 
 float Light::GetShaderIntensity() const {
-    return guard::SanitizeFloatKeepLast(intensity, lastGood_.intensity, kDefaultIntensity, this, NameOf(*this), "intensity");
+    // Najpierw NaN/Inf (ostatnia dobra), potem zakres - Wojcimierz swieci jasno, ale nie nieskonczenie.
+    const std::string n = NameOf(*this);
+    const float v = guard::SanitizeFloatKeepLast(intensity, lastGood_.intensity, kDefaultIntensity, this, n, "intensity");
+    return guard::ClampOnce(v, 0.0f, kMaxIntensity, this, n, "intensity");
 }
 
 glm::vec3 Light::GetShaderColor() const {
-    return guard::SanitizeVec3KeepLast(color, lastGood_.color, glm::vec3(1.0f), this, NameOf(*this), "color");
+    const std::string n = NameOf(*this);
+    const glm::vec3 c = guard::SanitizeVec3KeepLast(color, lastGood_.color, glm::vec3(1.0f), this, n, "color");
+    return guard::ClampVec3Once(c, 0.0f, kMaxColor, this, n, "color");
+}
+
+glm::vec3 Light::GetShaderRadiance() const {
+    // Iloczyn w double: 1e6 * 1e6 miesci sie w float, ale liczymy bezpiecznie niezaleznie od limitow.
+    const glm::dvec3 r = glm::dvec3(GetShaderColor()) * static_cast<double>(GetShaderIntensity());
+    constexpr double kMax = 3.0e38;
+    return glm::vec3(glm::clamp(r, glm::dvec3(0.0), glm::dvec3(kMax)));
 }
 
 bool Light::CheckFinitePosition() const {
@@ -46,30 +58,48 @@ bool Light::CheckFiniteDirection() const {
     return false;
 }
 
+namespace {
+// range == 0 to swiadomie "wylaczone" swiatlo (CollectLights je pomija) - bez ostrzezenia.
+// Ujemne -> 0 z ostrzezeniem; (0, kMinLightRange) i > kMaxLightRange -> przyciete z ostrzezeniem.
+float ClampLightRange(float v, const void* obj, const std::string& n) {
+    if (v <= 0.0f) return guard::ClampOnce(v, 0.0f, 0.0f, obj, n, "range");
+    return guard::ClampOnce(v, kMinLightRange, kMaxLightRange, obj, n, "range");
+}
+} // namespace
+
 float PointLight::GetShaderRange() const {
-    return guard::SanitizeFloatKeepLast(range, lastGood_.range, kDefaultRange, this, NameOf(*this), "range");
+    return ClampLightRange(guard::SanitizeFloatKeepLast(range, lastGood_.range, kDefaultRange, this, NameOf(*this), "range"),
+                           this, NameOf(*this));
 }
 
 float SpotLight::GetShaderRange() const {
-    return guard::SanitizeFloatKeepLast(range, lastGood_.range, kDefaultRange, this, NameOf(*this), "range");
+    return ClampLightRange(guard::SanitizeFloatKeepLast(range, lastGood_.range, kDefaultRange, this, NameOf(*this), "range"),
+                           this, NameOf(*this));
 }
 
 float SpotLight::GetShaderInnerAngle() const {
-    return guard::SanitizeFloatKeepLast(innerAngle, lastGood_.innerAngle, kDefaultInnerAngle, this, NameOf(*this), "innerAngle");
+    // inner <= outer: wewnetrzny stozek nie moze byc szerszy niz zewnetrzny.
+    const std::string n = NameOf(*this);
+    const float v = guard::SanitizeFloatKeepLast(innerAngle, lastGood_.innerAngle, kDefaultInnerAngle, this, n, "innerAngle");
+    return guard::ClampOnce(v, kMinAngle, GetShaderOuterAngle(), this, n, "innerAngle");
 }
 
 float SpotLight::GetShaderOuterAngle() const {
-    return guard::SanitizeFloatKeepLast(outerAngle, lastGood_.outerAngle, kDefaultOuterAngle, this, NameOf(*this), "outerAngle");
+    const std::string n = NameOf(*this);
+    const float v = guard::SanitizeFloatKeepLast(outerAngle, lastGood_.outerAngle, kDefaultOuterAngle, this, n, "outerAngle");
+    return guard::ClampOnce(v, kMinAngle, kMaxAngle, this, n, "outerAngle");
 }
 
 namespace lighting {
 
 float DistanceAttenuation(float distance, float range) {
-    if (range <= 0.0f || distance >= range) return 0.0f;
-    const float d2 = std::max(distance * distance, 1e-4f);
-    const float r = distance / range;
-    const float window = std::clamp(1.0f - r * r * r * r, 0.0f, 1.0f);
-    return window * window / d2;
+    if (!(range > 0.0f) || !(distance < range)) return 0.0f; // takze NaN
+    // W double: distance^2 i (d/range)^4 nie przepelnia sie nawet dla FLT_MAX.
+    const double d = distance, rg = range;
+    const double d2 = std::max(d * d, 1e-4);
+    const double r = d / rg;
+    const double window = std::clamp(1.0 - r * r * r * r, 0.0, 1.0);
+    return static_cast<float>(window * window / d2);
 }
 
 float SpotAttenuation(float cosAngle, float cosInner, float cosOuter) {
@@ -83,8 +113,8 @@ SpotCone ComputeSpotCone(float innerAngleDeg, float outerAngleDeg) {
     // NaN/Inf -> domyslne katy spota (straz na wypadek wywolania z pominieciem GetShader*).
     if (!render_detail::IsFinite(outerAngleDeg)) outerAngleDeg = SpotLight::kDefaultOuterAngle;
     if (!render_detail::IsFinite(innerAngleDeg)) innerAngleDeg = SpotLight::kDefaultInnerAngle;
-    const float outer = std::clamp(outerAngleDeg, 0.1f, 89.0f);
-    const float inner = std::clamp(innerAngleDeg, 0.0f, outer);
+    const float outer = std::clamp(outerAngleDeg, SpotLight::kMinAngle, SpotLight::kMaxAngle);
+    const float inner = std::clamp(innerAngleDeg, SpotLight::kMinAngle, outer);
     const float toRad = 3.14159265358979f / 180.0f;
     return {std::cos(inner * toRad), std::cos(outer * toRad)};
 }
