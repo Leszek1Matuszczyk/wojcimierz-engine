@@ -19,6 +19,13 @@ target_link_libraries(wz_core PUBLIC glm::glm)
 target_compile_definitions(wz_core PUBLIC GLM_ENABLE_EXPERIMENTAL)
 
 # ---------------------------------------------------------------------------
+# wz_serialization: zapis i odczyt scen/prefabow do JSON (bez GPU, dziala w CI).
+# ---------------------------------------------------------------------------
+add_library(wz_serialization STATIC
+  serialization/SceneSerializer.cpp)
+target_link_libraries(wz_serialization PUBLIC wz_core nlohmann_json::nlohmann_json)
+
+# ---------------------------------------------------------------------------
 # wz_engine: platforma (GLFW), RHI + backend OpenGL 4.5, komponenty renderujace,
 # zapis/odczyt PNG i klasa Engine.
 # ---------------------------------------------------------------------------
@@ -35,7 +42,7 @@ add_library(wz_engine STATIC
   render/Image.cpp)
 target_link_libraries(wz_engine PUBLIC wz_core PRIVATE glfw glad stb_headers)
 
-foreach(t wz_core wz_engine)
+foreach(t wz_core wz_serialization wz_engine)
   if(MSVC)
     target_compile_options(${t} PRIVATE /W4 /permissive- /utf-8)
   else()
