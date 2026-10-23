@@ -108,9 +108,10 @@ constexpr std::string_view UnqualifiedName(std::string_view n) {
 }
 
 template <typename T, typename FieldsFn>
-const TypeInfo& RegisterType(std::string_view spelledName, FieldsFn makeFields) {
+const TypeInfo* RegisterType(std::string_view spelledName, FieldsFn makeFields) {
     static_assert(std::is_base_of_v<Component, T>, "REFLECT: typ musi dziedziczyc po wz::Component");
     TypeInfo info(std::string(UnqualifiedName(spelledName)), std::type_index(typeid(T)));
+    info.cppName = std::string(spelledName);
     info.fields = makeFields();
     if constexpr (std::is_same_v<T, Transform>) {
         // Każdy GameObject ma już Transform, więc "dodanie" zwraca istniejący.
@@ -127,15 +128,24 @@ const TypeInfo& RegisterType(std::string_view spelledName, FieldsFn makeFields) 
 #define WZ_REFLECT_CONCAT_(a, b) a##b
 #define WZ_REFLECT_CONCAT(a, b) WZ_REFLECT_CONCAT_(a, b)
 
-// Rejestruje typ w ComponentRegistry podczas inicjalizacji statycznej.
+// Definiuje wz::RegisterReflected<Type>() (jawna rejestracja, wołana przez Register*Components()
+// modułu) oraz statyczną autorejestrację jako dodatek. Rejestracja jest idempotentna.
 // Wewnątrz listy pól alias `Self` oznacza rejestrowany typ.
+// Makro stawiamy w zasięgu globalnym albo w namespace wz (wymóg specjalizacji szablonu);
+// w innym namespace kompilator zgłosi błąd, a nie cichy brak rejestracji.
+// Na chwałę Wojcimierza: komponent zarejestrowany jawnie nie zginie w otchłani linkera.
 #define WZ_REFLECT(Type, ...)                                                                   \
-    namespace {                                                                                 \
-    [[maybe_unused]] const ::wz::TypeInfo& WZ_REFLECT_CONCAT(wzReflectedType_, __LINE__) =      \
-        ::wz::detail::RegisterType<Type>(#Type, [] {                                            \
+    template <>                                                                                 \
+    const ::wz::TypeInfo* wz::RegisterReflected<Type>() {                                       \
+        static const ::wz::TypeInfo* const info = ::wz::detail::RegisterType<Type>(#Type, [] {  \
             using Self = Type;                                                                  \
             return std::vector<::wz::FieldInfo>{__VA_ARGS__};                                   \
         });                                                                                     \
+        return info;                                                                            \
+    }                                                                                           \
+    namespace {                                                                                 \
+    [[maybe_unused]] const ::wz::TypeInfo* const WZ_REFLECT_CONCAT(wzReflectedType_, __LINE__) = \
+        ::wz::RegisterReflected<Type>();                                                        \
     }
 
 #define WZ_FIELD(member) ::wz::detail::MakeField<Self>(#member, &Self::member)

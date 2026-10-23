@@ -11,6 +11,7 @@ add_library(wz_core STATIC
   scene/Transform.cpp
   scene/GameObject.cpp
   scene/Scene.cpp
+  scene/SceneComponents.cpp
   platform/Input.cpp
   render/MeshData.cpp
   render/Camera.cpp)

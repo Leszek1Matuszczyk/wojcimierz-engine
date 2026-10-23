@@ -1,4 +1,5 @@
 #include "core/Engine.h"
+#include "scene/SceneComponents.h"
 #include "core/Time.h"
 #include "platform/GlfwInputSource.h"
 #include "platform/Input.h"
@@ -32,6 +33,8 @@ bool EngineConfig::ParseArgs(int argc, char** argv, EngineConfig& c, std::string
 }
 
 Engine::Engine(EngineConfig config) : config_(std::move(config)), loop_(GameLoop::Settings{config_.fixedDeltaTime, 1.0f / 3.0f}) {
+    // Jawna rejestracja komponentów, zanim cokolwiek wczyta scenę (decyzja zespołu: bez whole-archive).
+    RegisterSceneComponents();
     Time::Reset();
     Input::Reset();
     WindowDesc wd = config_.window;

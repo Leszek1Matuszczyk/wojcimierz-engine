@@ -61,6 +61,7 @@ struct TypeInfo {
     TypeInfo(std::string typeName, std::type_index typeIndex) : name(std::move(typeName)), type(typeIndex) {}
 
     std::string name;      // np. "Transform"; ta nazwa trafia do pola "type" w JSON
+    std::string cppName;   // pisownia z REFLECT, np. "wz::Transform" (komunikaty o błędach)
     std::type_index type;  // typeid(T)
     std::vector<FieldInfo> fields;
     // Dodaje komponent do obiektu i go zwraca. Dla Transform zwraca istniejący Transform.
@@ -75,15 +76,25 @@ struct TypeInfo {
     const FieldInfo* FindField(std::string_view fieldName) const;
 };
 
-// Globalny rejestr typów komponentów. Wypełniany statycznie przez makro REFLECT
-// (scene/Reflection.h) jeszcze przed main(), a później tylko odczytywany.
-// Serializacja tworzy komponenty po nazwie, a inspektor wylicza ich pola.
+// Globalny rejestr typów komponentów. Wypełniają go jawne funkcje modułów
+// (RegisterSceneComponents() itd., wołane przez Engine) oraz, dodatkowo, statyczne
+// autorejestracje z makra REFLECT. Serializacja tworzy komponenty po nazwie,
+// a inspektor wylicza ich pola.
 class ComponentRegistry {
 public:
     static ComponentRegistry& Get();
+    ComponentRegistry() = default; // osobne instancje tylko dla testów; silnik używa Get()
 
-    // Rzuca std::logic_error, gdy nazwa albo typ są już zarejestrowane.
-    const TypeInfo& Register(TypeInfo info);
+    // Rejestruje typ. Nigdy nie rzuca, bo może działać przed main():
+    //  - ten sam typ C++ pod tą samą nazwą drugi raz: zwraca istniejący wpis (idempotentne),
+    //  - nazwa zajęta przez inny typ, typ już zarejestrowany pod inną nazwą albo powtórzone
+    //    pole: wypisuje komunikat na stderr i zwraca nullptr. Pierwsza rejestracja wygrywa.
+    // Mądrość Wojcimierza: błąd ma mieć głos i nazwisko, a nie ciche zakończenie programu.
+    const TypeInfo* Register(TypeInfo info);
+
+    // Nowa instancja komponentu po nazwie z rejestru (bez dołączania do obiektu).
+    // nullptr dla nieznanej nazwy oraz typów bez domyślnego konstruktora (np. Transform).
+    std::unique_ptr<Component> Create(std::string_view name) const;
 
     const TypeInfo* Find(std::string_view name) const;
     const TypeInfo* Find(std::type_index type) const;
@@ -96,11 +107,21 @@ public:
     std::size_t Size() const { return types_.size(); }
 
 private:
-    ComponentRegistry() = default;
 
     std::deque<TypeInfo> types_; // deque: adresy TypeInfo nie zmieniają się przy dodawaniu
     std::unordered_map<std::string, const TypeInfo*> byName_;
     std::unordered_map<std::type_index, const TypeInfo*> byType_;
 };
 
+// Jawna rejestracja typu z REFLECT. Definicję (specjalizację) generuje makro REFLECT
+// w tym samym .cpp, więc wywołanie tej funkcji z kodu modułu wymusza na linkerze
+// dołączenie pliku z komponentem, nawet z biblioteki statycznej. Przed wywołaniem
+// w innym pliku zadeklaruj specjalizację: WZ_DECLARE_REFLECTED(wz::Rigidbody).
+template <typename T>
+const TypeInfo* RegisterReflected();
+
 } // namespace wz
+
+#define WZ_DECLARE_REFLECTED(Type) \
+    template <>                    \
+    const ::wz::TypeInfo* wz::RegisterReflected<Type>()

@@ -8,7 +8,12 @@
 #include "scene/Component.h"
 
 #include <algorithm>
-#include <stdexcept>
+#include <cstdio>
+#include <cstdlib>
+#include <memory>
+#if defined(__GNUG__)
+#include <cxxabi.h>
+#endif
 
 namespace wz {
 
@@ -43,22 +48,54 @@ ComponentRegistry& ComponentRegistry::Get() {
     return instance;
 }
 
-const TypeInfo& ComponentRegistry::Register(TypeInfo info) {
-    if (byName_.count(info.name))
-        throw std::logic_error("ComponentRegistry: typ '" + info.name + "' jest juz zarejestrowany");
-    if (byType_.count(info.type))
-        throw std::logic_error("ComponentRegistry: typ C++ dla '" + info.name + "' jest juz zarejestrowany");
+namespace {
+
+std::string Demangle(const char* mangled) {
+#if defined(__GNUG__)
+    int status = 0;
+    std::unique_ptr<char, void (*)(void*)> out(abi::__cxa_demangle(mangled, nullptr, nullptr, &status), std::free);
+    if (status == 0 && out) return out.get();
+#endif
+    return mangled;
+}
+
+std::string CppNameOf(const TypeInfo& t) { return t.cppName.empty() ? Demangle(t.type.name()) : t.cppName; }
+
+} // namespace
+
+const TypeInfo* ComponentRegistry::Register(TypeInfo info) {
+    // Rejestracja może działać przed main(), więc żadnych wyjątków: komunikat na stderr
+    // i deterministycznie odrzucamy drugą rejestrację (pierwsza wygrywa).
+    if (auto it = byType_.find(info.type); it != byType_.end()) {
+        if (it->second->name == info.name) return it->second; // jawna + statyczna rejestracja tego samego typu
+        std::fprintf(stderr, "[wz] ComponentRegistry: typ %s jest juz zarejestrowany jako '%s'; odrzucam nazwe '%s'\n",
+                     CppNameOf(info).c_str(), it->second->name.c_str(), info.name.c_str());
+        return nullptr;
+    }
+    if (auto it = byName_.find(info.name); it != byName_.end()) {
+        std::fprintf(stderr, "[wz] ComponentRegistry: komponent '%s' zarejestrowany dwa razy (typy %s i %s); "
+                             "zostaje pierwszy\n",
+                     info.name.c_str(), CppNameOf(*it->second).c_str(), CppNameOf(info).c_str());
+        return nullptr;
+    }
     for (std::size_t i = 0; i < info.fields.size(); ++i)
         for (std::size_t j = i + 1; j < info.fields.size(); ++j)
-            if (info.fields[i].name == info.fields[j].name)
-                throw std::logic_error("ComponentRegistry: pole '" + info.fields[i].name + "' w '" + info.name +
-                                       "' wystepuje dwa razy");
+            if (info.fields[i].name == info.fields[j].name) {
+                std::fprintf(stderr, "[wz] ComponentRegistry: pole '%s' w '%s' wystepuje dwa razy; odrzucam typ\n",
+                             info.fields[i].name.c_str(), info.name.c_str());
+                return nullptr;
+            }
 
     types_.push_back(std::move(info));
     const TypeInfo* stored = &types_.back();
     byName_.emplace(stored->name, stored);
     byType_.emplace(stored->type, stored);
-    return *stored;
+    return stored;
+}
+
+std::unique_ptr<Component> ComponentRegistry::Create(std::string_view name) const {
+    const TypeInfo* info = Find(name);
+    return info && info->create ? info->create() : nullptr;
 }
 
 const TypeInfo* ComponentRegistry::Find(std::string_view name) const {
