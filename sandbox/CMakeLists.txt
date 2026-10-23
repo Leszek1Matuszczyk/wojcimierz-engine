@@ -1,0 +1,5 @@
+add_executable(sandbox main.cpp)
+target_link_libraries(sandbox PRIVATE wz_engine)
+if(MSVC)
+  target_compile_options(sandbox PRIVATE /utf-8)
+endif()
