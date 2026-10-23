@@ -36,7 +36,7 @@ bool EngineConfig::ParseArgs(int argc, char** argv, EngineConfig& c, std::string
     return true;
 }
 
-Engine::Engine(EngineConfig config) : config_(std::move(config)), loop_(GameLoop::Settings{config_.fixedDeltaTime, 0.25f}) {
+Engine::Engine(EngineConfig config) : config_(std::move(config)), loop_(GameLoop::Settings{config_.fixedDeltaTime, config_.maximumDeltaTime}) {
     Time::Reset();
     Input::Reset();
     WindowDesc wd = config_.window;

@@ -55,45 +55,141 @@ komponentów, przed renderem, np. audio: `wz::LateUpdateCallback hook([&](float)
 Kolejność wywołań: `Awake` (przy `AddComponent`) → `Start` → `FixedUpdate`×N → `Update` → `LateUpdate` → `OnDestroy`
 (`Scene::Destroy` jest odroczone do końca klatki, jak `Object.Destroy`).
 
-## Budowanie
+## Uruchomienie
 
-Linux (Debian/Ubuntu):
+Zanim czcigodny Wojcimierz ujrzy pierwszy obracający się sześcian, trzeba zbudować silnik. Wszystkie
+poniższe polecenia uruchamiamy z katalogu głównego repozytorium. Zależności (GLFW, glm, stb, GoogleTest)
+CMake pobiera sam przez FetchContent, więc przy pierwszej konfiguracji potrzebny jest internet.
+
+### Wymagania
+
+| System | Status | Co zainstalować |
+|---|---|---|
+| Ubuntu 22.04+/Debian 12+ | wspierany (CI: ubuntu-24.04) | kompilator z C++20 (GCC ≥ 11 albo Clang ≥ 14), CMake ≥ 3.24, git, biblioteki X11/Mesa (lista niżej) |
+| Windows 10/11 | wspierany (CI: windows-latest) | Visual Studio 2022 z obciążeniem „Programowanie aplikacji klasycznych w C++”, CMake ≥ 3.24 (jest w VS), git |
+| macOS | **jeszcze niewspierany** | macOS ma tylko OpenGL 4.1, a silnik wymaga 4.5 core. Wsparcie przyjdzie z backendem Vulkan/Metal. |
+
+Ubuntu/Debian:
 
 ```bash
-sudo apt-get install build-essential cmake ninja-build pkg-config \
+sudo apt-get update
+sudo apt-get install -y build-essential cmake ninja-build pkg-config git \
   libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libxext-dev \
   libgl1-mesa-dev libgl1-mesa-dri mesa-utils xvfb
-cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+```
+
+Na Ubuntu 22.04 `cmake` z apt to 3.22, czyli za stary. Nowszy można zainstalować przez `pip install cmake`
+albo z repozytorium Kitware. Na Wayland nie trzeba nic więcej, bo GLFW działa przez XWayland.
+
+### Pobranie i budowanie
+
+```bash
+git clone https://github.com/Leszek1Matuszczyk/wojcimierz-engine.git
+cd wojcimierz-engine
+
+# Release (domyślny, gdy nie podasz CMAKE_BUILD_TYPE)
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j
+
+# Debug (osobny katalog, żeby nie przebudowywać Release)
+cmake -S . -B build-debug -DCMAKE_BUILD_TYPE=Debug
+cmake --build build-debug -j
 ```
 
-Windows (Visual Studio 2022): `cmake -S . -B build -A x64 && cmake --build build --config Release`.
+Szybsze budowanie z Ninja: dodaj `-G Ninja` do pierwszego polecenia.
 
-Opcje CMake: `WZ_BUILD_TESTS`, `WZ_BUILD_SANDBOX`, `WZ_BUILD_RENDER_TESTS`, `WZ_BUILD_BENCHMARKS` (domyślnie ON),
-`WZ_SANITIZE` (ASan + UBSan, domyślnie OFF).
+Windows (Developer PowerShell dla VS 2022; generator Visual Studio jest wielokonfiguracyjny, więc
+konfigurację wybieramy przy budowaniu i przy ctest):
 
-## Uruchamianie
-
-```bash
-./build/sandbox/sandbox                      # okno, Esc zamyka
-./build/sandbox/sandbox --headless --frames 60 --screenshot out.png   # bez okna, zrzut PNG
+```powershell
+cmake -S . -B build -A x64
+cmake --build build --config Release --parallel
+ctest --test-dir build -C Release -L unit --output-on-failure
+.\build\sandbox\Release\sandbox.exe
 ```
 
-Tryb `--headless` tworzy niewidoczne okno GLFW, renderuje do bufora offscreen i używa
-ręcznego zegara (stałe 1/60 s na klatkę), więc wynik jest powtarzalny.
-Bez GPU działa na Mesa llvmpipe:
+Opcje CMake (`-D<opcja>=ON/OFF`):
+
+| Opcja | Domyślnie | Znaczenie |
+|---|---|---|
+| `WZ_BUILD_TESTS` | ON | testy jednostkowe (GoogleTest) |
+| `WZ_BUILD_SANDBOX` | ON | przykładowa aplikacja `sandbox` |
+| `WZ_BUILD_RENDER_TESTS` | ON | `render_tests` (zrzuty scen) |
+| `WZ_BUILD_BENCHMARKS` | ON | mikro-benchmarki rdzenia |
+| `WZ_SANITIZE` | OFF | AddressSanitizer + UndefinedBehaviorSanitizer (GCC/Clang; na MSVC tylko ASan) |
+
+### Sandbox
 
 ```bash
-LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a ./build/sandbox/sandbox --headless --frames 60 --screenshot out.png
+./build/sandbox/sandbox                                                          # okno 1280×720, Esc zamyka
+./build/sandbox/sandbox --width 1920 --height 1080                              # inny rozmiar okna
+./build/sandbox/sandbox --headless --frames 120 --screenshot out.png            # bez okna, zrzut ostatniej klatki
 ```
 
-## Testy
+`--headless` tworzy niewidoczne okno i renderuje offscreen. Działa na ręcznym zegarze (stałe 1/60 s na klatkę),
+więc zrzut jest powtarzalny. Gdy nie podasz `--frames`, renderowana jest 1 klatka.
+
+### Testy
 
 ```bash
-ctest --test-dir build -L unit --output-on-failure            # jednostkowe (bez GPU)
+ctest --test-dir build --output-on-failure            # wszystko (render wymaga GL, patrz niżej)
+ctest --test-dir build -L unit --output-on-failure    # jednostkowe, bez GPU i bez okna
+ctest --test-dir build -L render --output-on-failure  # render_tests + sandbox headless (potrzebne GL 4.5)
+ctest --test-dir build -L bench                       # szybki (dymny) przebieg benchmarków
+python3 scripts/check_headers.py                      # każdy plik ma nagłówek Wojcimierza
+```
+
+Wyniki `render_tests` trafiają do **`build/render_out/<scena>.png`**. Zrzuty sandboxa z testów
+(`sandbox_headless.png` i `sandbox_window_srgb_blit.png`) lądują w tym samym katalogu.
+
+### Benchmarki
+
+```bash
+./build/benchmarks/wz_benchmarks                                     # pełny przebieg (Release!)
+./build/benchmarks/wz_benchmarks --quick --json benchmarks.json      # szybki przebieg + JSON
+python3 scripts/compare_benchmarks.py stary.json benchmarks.json     # delta w % względem baseline'u
+```
+
+JSON zawiera średni i p95 czas CPU klatki (ms), szczytowe RSS (MB), liczbę klatek i wyniki mikro-benchmarków.
+CI porównuje go z ostatnim wynikiem z `main`. Porównanie jest tylko informacyjne i nie blokuje PR.
+
+### Build z sanitizerami (ASan + UBSan)
+
+```bash
+cmake -S . -B build-asan -DCMAKE_BUILD_TYPE=Debug -DWZ_SANITIZE=ON -DWZ_BUILD_SANDBOX=OFF -DWZ_BUILD_RENDER_TESTS=OFF
+cmake --build build-asan -j
+ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=print_stacktrace=1 ctest --test-dir build-asan -L "unit|bench" --output-on-failure
+```
+
+### Linux bez GPU / bez monitora (serwer, CI, kontener)
+
+Wystarczy programowy renderer Mesa (llvmpipe, OpenGL 4.5) i wirtualny X przez `xvfb-run`:
+
+```bash
 LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a ctest --test-dir build -L render --output-on-failure
-ctest --test-dir build -L bench                                # szybki przebieg benchmarków
-python3 scripts/check_headers.py                               # nagłówki plików
+LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a ./build/sandbox/sandbox --headless --frames 60 --screenshot out.png
+LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a glxinfo -B | grep -i "version"     # powinno być 4.5 (Core Profile)
+```
+
+### Rozwiązywanie problemów
+
+* **`Nie udalo sie utworzyc okna z kontekstem OpenGL 4.5 core`** albo **`Wymagany OpenGL 4.5, sterownik zglasza: ...`**:
+  sterownik nie daje GL 4.5. Sprawdź `glxinfo -B`. Na maszynie wirtualnej, przez SSH lub na starym GPU użyj
+  `LIBGL_ALWAYS_SOFTWARE=1` (llvmpipe z Mesa ≥ 20). Na macOS to oczekiwane (patrz Wymagania).
+* **`[GLFW] blad 65550: X11: The DISPLAY environment variable is missing`** + `glfwInit() nie powiodlo sie`:
+  brak serwera X. Uruchom przez `xvfb-run -a ...`. Dotyczy to także `--headless`, bo GLFW i tak potrzebuje
+  wyświetlacza do kontekstu GL.
+* **CMake: `Could NOT find X11` / `RandR headers not found` / `Xinerama headers not found`**:
+  brakuje pakietów `-dev` X11. Zainstaluj listę z sekcji Wymagania i usuń katalog `build`.
+* **`CMake 3.24 or higher is required`**: zaktualizuj CMake (`pip install cmake`).
+* **Brak internetu (FetchContent)**: po pierwszej udanej konfiguracji źródła są w `build/_deps/`.
+  Kolejne konfiguracje bez sieci przechodzą z `-DFETCHCONTENT_FULLY_DISCONNECTED=ON`. Można też wskazać lokalne
+  kopie, np. `-DFETCHCONTENT_SOURCE_DIR_GLFW=/sciezka/glfw` (analogicznie `GLM`, `STB`, `GOOGLETEST`).
+
+## Testy – szczegóły
+
+```bash
+python3 scripts/check_headers.py --fix                         # dopisze brakujące nagłówki
 ```
 
 ### render_tests – sceny do porównywania zrzutów
@@ -138,15 +234,20 @@ To miejsce, w które wpina się komparator zespołu testów (np. zapis `<scena>_
 
 ## CI (GitHub Actions)
 
-`.github/workflows/ci.yml`:
+`.github/workflows/ci.yml`. Każdy job ma `timeout-minutes`. Na gałęziach roboczych nowy push anuluje
+poprzedni przebieg, a na `main` każdy przebieg dochodzi do końca.
 
-1. `headers` – `scripts/check_headers.py` (pierwszy job, reszta od niego zależy),
-2. `linux` – build, testy `unit` i `render` pod xvfb + llvmpipe, zrzut sandboxa, benchmarki;
-   artefakt **`render_out`** (cały katalog `build/render_out/`),
-3. `sanitizers` – Debug z ASan + UBSan, testy `unit` i `bench`,
-4. `windows` – build MSVC i testy `unit`,
-5. `gpu` – self-hosted runner z GPU; tylko push do `main`, PR z gałęzi tego repo albo ręcznie,
-   i tylko gdy zmienna repo `GPU_RUNNER == 'true'` (nigdy kod z forków).
+1. `headers` (5 min): `scripts/check_headers.py`. To pierwszy job i reszta od niego zależy.
+2. `linux` (20 min): build, testy `unit` i `render` pod xvfb + llvmpipe, zrzut sandboxa.
+   Artefakt **`render_out`** to cały katalog `build/render_out/`.
+3. `sanitizers` (30 min): Debug z ASan + UBSan, testy `unit` i `bench`.
+4. `bench` (15 min): pełny przebieg `wz_benchmarks` w Release i artefakt **`benchmarks`** (`benchmarks.json`).
+   Wynik jest porównywany z artefaktem ostatniego udanego przebiegu na `main` (`scripts/compare_benchmarks.py`,
+   delta w % w logu i w podsumowaniu joba). Porównanie jest informacyjne i nie blokuje PR.
+   Brak baseline'u oznacza tylko `notice`.
+5. `windows` (30 min): build MSVC i testy `unit`.
+6. `gpu` (20 min): self-hosted runner z GPU. Uruchamia się tylko przy pushu do `main`, dla PR z gałęzi tego repo
+   albo ręcznie, i tylko gdy zmienna repo `GPU_RUNNER == 'true'` (nigdy nie uruchamia kodu z forków).
 
 Cache `build/_deps` jest kluczowany hashem `cmake/Dependencies.cmake` i `CMakeLists.txt`.
 

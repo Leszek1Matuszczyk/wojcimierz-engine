@@ -24,8 +24,9 @@ struct EngineConfig {
     bool forceSrgbBlit = false;     // okno: zawsze render do celu sRGB + blit (test sciezki dla okien bez sRGB)
     int maxFrames = 0;              // 0 = bez limitu (tryb okienkowy)
     std::string screenshotPath;     // zrzut ostatniej klatki do PNG (pusty = brak)
-    float fixedDeltaTime = 1.0f / 60.0f;
-    float headlessFrameTime = 1.0f / 60.0f; // czas klatki w trybie headless (deterministyczny)
+    double fixedDeltaTime = 1.0 / 60.0;
+    double maximumDeltaTime = 0.25;
+    double headlessFrameTime = 1.0 / 60.0; // czas klatki w trybie headless (deterministyczny)
 
     // Parsuje: --headless --frames N --screenshot plik.png --width W --height H --force-srgb-blit
     // Zwraca false przy blednych argumentach (komunikat w 'error').
