@@ -119,3 +119,105 @@ TEST(PR21, SanitizeRotationNormalizedAndTiny) {
   EXPECT_EQ(f, fb); EXPECT_EQ(g, fb); EXPECT_EQ(h, fb);
   EXPECT_EQ(NonFiniteWarningCount("PR21.tiny") - before, 3u);
 }
+
+// ---- Runda 2 (#21 na 1bb1614) ----
+namespace {
+struct Probe { std::uint32_t v; bool dirtyBefore; };
+void Clean(Transform& t) { (void)t.GetLocalToWorldMatrix(); }
+}
+
+TEST(PR21b, RejectedAndIdenticalDoNotTouchVersionOrDirty) {
+  Scene s; auto& par = s.CreateGameObject().transform(); auto& t = s.CreateGameObject().transform();
+  t.SetParent(&par, false);
+  t.SetLocalPosition({1,2,3}); t.SetLocalScale({2,2,2}); t.SetLocalEulerAngles({10,20,30});
+  Clean(t); Clean(par);
+  const auto v0 = t.GetChangeVersion(); const auto pv0 = par.GetChangeVersion();
+  ASSERT_FALSE(t.IsWorldMatrixDirty());
+  testing::internal::CaptureStderr();
+  t.SetLocalPosition({kNaN,0,0}); t.SetPosition({kInf,0,0}); t.SetLocalScale({0,kNaN,0});
+  t.SetLocalEulerAngles({kNaN,0,0}); t.Translate({kNaN,0,0}); t.Translate({0,kInf,0}, true);
+  t.Rotate({0,kNaN,0}); t.Rotate({kInf,0,0}, true); t.LookAt({kNaN,0,0}); t.LookAt({0,0,-5},{kNaN,0,0});
+  t.LookAt({5,0,0},{0,0,0}); t.LookAt(t.GetPosition() + glm::vec3(0,3,0), {0,1,0});
+  t.LookAt(t.GetPosition(), {0,1,0});
+  t.SetLocalRotation(glm::quat(kNaN,0,0,0)); t.SetLocalRotation(glm::quat(0,0,0,0));
+  t.SetRotation(glm::quat(0,0,0,0)); t.SetRotation(glm::quat(1,kInf,0,0));
+  t.SetWorldPoseFromPhysics({kNaN,0,0}, glm::quat(0,0,0,0));
+  t.SetParent(&par, true); t.SetParent(&t, true);
+  (void)testing::internal::GetCapturedStderr();
+  EXPECT_EQ(t.GetChangeVersion(), v0) << "odrzucone";
+  EXPECT_FALSE(t.IsWorldMatrixDirty()) << "odrzucone -> dirty";
+  // identyczne wartosci
+  t.SetLocalPosition(t.GetLocalPosition()); t.SetLocalScale(t.GetLocalScale());
+  t.SetLocalRotation(t.GetLocalRotation()); t.SetPosition(t.GetPosition());
+  EXPECT_EQ(t.GetChangeVersion(), v0) << "identyczne Local*/SetPosition";
+  EXPECT_FALSE(t.IsWorldMatrixDirty());
+  auto step = [&](const char* name, auto fn) { Clean(t); const auto b = t.GetChangeVersion(); fn();
+    std::printf("  [info] %-34s wersja +%d, dirty=%d\n", name, int(t.GetChangeVersion() - b), int(t.IsWorldMatrixDirty())); return t.GetChangeVersion() - b; };
+  EXPECT_EQ(step("SetRotation(GetRotation()) z rodzicem", [&]{ t.SetRotation(t.GetRotation()); }), 0u);
+  EXPECT_EQ(step("Translate(0) lokalnie", [&]{ t.Translate({0,0,0}); }), 0u);
+  EXPECT_EQ(step("Translate(0) w swiecie", [&]{ t.Translate({0,0,0}, true); }), 0u);
+  EXPECT_EQ(step("Rotate(0) lokalnie", [&]{ t.Rotate({0,0,0}); }), 0u);
+  EXPECT_EQ(step("Rotate(0) w swiecie", [&]{ t.Rotate({0,0,0}, true); }), 0u);
+  step("SetLocalEulerAngles(Get)", [&]{ t.SetLocalEulerAngles(t.GetLocalEulerAngles()); });
+  t.SetParent(nullptr, true);
+  EXPECT_EQ(step("SetRotation(GetRotation()) bez rodzica", [&]{ t.SetRotation(t.GetRotation()); }), 0u);
+  EXPECT_EQ(step("Rotate(0) bez rodzica", [&]{ t.Rotate({0,0,0}); }), 0u);
+  EXPECT_EQ(step("Translate(0) bez rodzica", [&]{ t.Translate({0,0,0}, true); }), 0u);
+  t.SetParent(&par, true); Clean(t);
+  t.SetWorldPoseFromPhysics(t.GetPosition(), t.GetRotation());
+  EXPECT_FALSE(t.IsWorldMatrixDirty()) << "fizyka z ta sama poza";
+  EXPECT_EQ(par.GetChangeVersion(), pv0);
+}
+
+TEST(PR21b, PhysicsPosePartialAccept) {
+  Scene s; auto& t = s.CreateGameObject().transform();
+  t.SetLocalPosition({1,1,1}); const auto r0 = t.GetLocalRotation(); const auto v0 = t.GetChangeVersion();
+  testing::internal::CaptureStderr();
+  const glm::quat good = glm::normalize(glm::quat(glm::vec3(0.3f,0.2f,0.1f)));
+  t.SetWorldPoseFromPhysics({kNaN,0,0}, good);
+  EXPECT_EQ(t.GetLocalPosition(), glm::vec3(1,1,1)); EXPECT_NEAR(std::abs(glm::dot(t.GetLocalRotation(), good)), 1.f, 1e-6f);
+  t.SetWorldPoseFromPhysics({4,5,6}, glm::quat(kNaN,0,0,0));
+  t.SetWorldPoseFromPhysics({7,8,9}, glm::quat(0,0,0,0));
+  (void)testing::internal::GetCapturedStderr();
+  EXPECT_EQ(t.GetLocalPosition(), glm::vec3(7,8,9)); EXPECT_NEAR(std::abs(glm::dot(t.GetLocalRotation(), good)), 1.f, 1e-6f);
+  EXPECT_EQ(t.GetChangeVersion(), v0) << "fizyka nie podbija wersji";
+  (void)r0;
+  // z rodzicem o skali 0: pozycja odrzucona, obrot przyjety
+  auto& par = s.CreateGameObject().transform(); t.SetParent(&par, false); par.SetLocalScale({0,0,0});
+  const auto lp = t.GetLocalPosition();
+  testing::internal::CaptureStderr();
+  t.SetWorldPoseFromPhysics({1,2,3}, glm::quat(glm::vec3(0,1,0)));
+  (void)testing::internal::GetCapturedStderr();
+  EXPECT_EQ(t.GetLocalPosition(), lp); EXPECT_NEAR(std::abs(glm::dot(t.GetLocalRotation(), glm::quat(glm::vec3(0,1,0)))), 1.f, 1e-6f);
+}
+
+TEST(PR21b, LookAtUpEdgeCases) {
+  Scene s; auto& t = s.CreateGameObject().transform();
+  t.SetLocalEulerAngles({0,45,0}); const auto r0 = t.GetLocalRotation(); const auto v0 = t.GetChangeVersion();
+  testing::internal::CaptureStderr();
+  const auto c0 = NonFiniteWarningCount("Transform.LookAt (gora zerowa lub rownolegla do kierunku)");
+  t.LookAt({0,5,0}, {0,1,0});      // rownolegle
+  t.LookAt({0,-5,0}, {0,1,0});     // antyrownolegle
+  t.LookAt({0,5,0}, {0,0,0});      // zero
+  t.LookAt({0,5,0}, {0,1e-30f,0}); // malutkie, rownolegle
+  t.LookAt({0,0,0}, {0,1,0});      // cel w tym samym punkcie
+  const auto c1 = NonFiniteWarningCount("Transform.LookAt (gora zerowa lub rownolegla do kierunku)");
+  (void)testing::internal::GetCapturedStderr();
+  EXPECT_EQ(c1 - c0, 4u) << "4 odrzucenia up (cel w tym samym punkcie po cichu)";
+  EXPECT_EQ(t.GetLocalRotation(), r0); EXPECT_EQ(t.GetChangeVersion(), v0);
+  // prawie rownolegle: kat a do osi Y
+  for (double a : {1e-2, 1e-3, 1e-4, 1e-5, 1e-6, 1e-7}) {
+    Scene s2; auto& u = s2.CreateGameObject().transform(); u.SetLocalEulerAngles({0,45,0});
+    const auto before = u.GetLocalRotation();
+    const glm::vec3 target(float(std::sin(a)) * 10.f, float(std::cos(a)) * 10.f, 0.f);
+    testing::internal::CaptureStderr(); u.LookAt(target, {0,1,0}); const std::string e = testing::internal::GetCapturedStderr();
+    const auto q = u.GetLocalRotation();
+    const bool accepted = !(q == before);
+    const glm::vec3 fwd = q * glm::vec3(0,0,-1); const glm::vec3 up = q * glm::vec3(0,1,0);
+    const float err = glm::length(fwd - glm::normalize(target));
+    std::printf("  [info] kat %.0e rad: %s, |q|=%.7f, blad kierunku=%.2e, up.y=%.4f\n", a, accepted ? "przyjety" : "odrzucony",
+                glm::length(q), err, up.y);
+    EXPECT_TRUE(IsFinite(q)); EXPECT_TRUE(Unit(q));
+    if (accepted) EXPECT_LT(err, 1e-3f) << "kat " << a;
+  }
+}
