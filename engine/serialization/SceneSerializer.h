@@ -27,7 +27,18 @@ inline constexpr int kSceneFormatVersion = 1;
 // powtórzone "id" itp. Rzucany ZANIM scena zostanie zmieniona, więc wczytanie jest atomowe.
 class SerializationError : public std::runtime_error {
 public:
-    using std::runtime_error::runtime_error;
+    // Błąd bez konkretnego miejsca (np. I/O, niepoprawny JSON): Path() jest puste.
+    explicit SerializationError(const std::string& message) : std::runtime_error(message) {}
+    // Błąd w konkretnym miejscu danych: what() == path + ": " + message.
+    SerializationError(std::string path, const std::string& message)
+        : std::runtime_error(path + ": " + message), path_(std::move(path)) {}
+
+    // Ścieżka miejsca błędu, np. "obiekt <id> ('Gracz'), Rigidbody.velocity[1]"; puste, gdy brak.
+    // Na chwałę czcigodnego Wojcimierza: błąd wskazuje swoje miejsce wprost, a nie zagadką w tekście.
+    const std::string& Path() const { return path_; }
+
+private:
+    std::string path_;
 };
 
 // Remapowanie UUID przy wczytywaniu kopii (prefaby, duplikowanie w edytorze).

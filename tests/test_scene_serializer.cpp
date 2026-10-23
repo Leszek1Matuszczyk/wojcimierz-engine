@@ -12,6 +12,7 @@
 #include <filesystem>
 #include <functional>
 #include <limits>
+#include <optional>
 #include <sstream>
 #if defined(__linux__)
 #include <csignal>
@@ -538,7 +539,26 @@ TEST(SceneSerializer, SkippedComponentsAreReportedToCaller) {
     EXPECT_NE(err.find(warnings[0]), std::string::npos) << "stderr zostaje";
 }
 
-// Twardy test ścieżki serializera: pole bez walidacji, NaN i osobno ±Inf, dokładny komunikat.
+// Wywołuje fn i zwraca złapany SerializationError. Każdy inny typ wyjątku albo brak wyjątku
+// to FAIL (test nie przejdzie dzięki samej treści what() innego wyjątku).
+static std::optional<SerializationError> CatchSerializationError(const std::function<void()>& fn) {
+    try {
+        fn();
+    } catch (const SerializationError& e) {
+        return e;
+    } catch (const std::exception& e) {
+        ADD_FAILURE() << "zly typ wyjatku (oczekiwano SerializationError): " << e.what();
+        return std::nullopt;
+    } catch (...) {
+        ADD_FAILURE() << "zly typ wyjatku (nie std::exception)";
+        return std::nullopt;
+    }
+    ADD_FAILURE() << "brak wyjatku, oczekiwano SerializationError";
+    return std::nullopt;
+}
+
+// Twardy test ścieżki serializera: pole bez walidacji, NaN i osobno ±Inf.
+// Ścieżkę sprawdza SerializationError::Path(), a nie tekst what().
 TEST(SceneSerializer, RawNonFiniteFloatIsRejectedWithExactPath) {
     struct Case {
         float v;
@@ -548,20 +568,35 @@ TEST(SceneSerializer, RawNonFiniteFloatIsRejectedWithExactPath) {
                           {std::numeric_limits<float>::infinity(), "Inf"},
                           {-std::numeric_limits<float>::infinity(), "Inf"}};
     for (const Case& c : cases) {
+        SCOPED_TRACE(c.kind);
         Scene scene("S");
         GameObject& go = scene.CreateGameObject("Raw");
         go.AddComponent<RawFloats>().value = c.v;
-        const std::string expected = "obiekt " + go.GetId().ToString() + " ('Raw'), RawFloats.value: wartosc " +
-                                     c.kind + " nie moze trafic do pliku sceny";
-        EXPECT_EQ(ThrowMessage([&] { SceneSerializer::SerializeScene(scene); }), expected);
-        EXPECT_EQ(ThrowMessage([&] { SceneSerializer::SerializeSubtree(go); }), expected);
+        const std::string path = "obiekt " + go.GetId().ToString() + " ('Raw'), RawFloats.value";
+        for (auto fn : {std::function<void()>([&] { SceneSerializer::SerializeScene(scene); }),
+                        std::function<void()>([&] { SceneSerializer::SerializeSubtree(go); })}) {
+            auto e = CatchSerializationError(fn);
+            ASSERT_TRUE(e.has_value());
+            EXPECT_EQ(e->Path(), path);
+            EXPECT_NE(std::string(e->what()).find(c.kind), std::string::npos) << e->what();
+        }
     }
     for (const Case& c : cases) {
+        SCOPED_TRACE(c.kind);
         Scene scene("S");
         GameObject& go = scene.CreateGameObject("Raw");
         go.AddComponent<RawFloats>().vec = {1.0f, 2.0f, c.v};
-        const std::string expected = "obiekt " + go.GetId().ToString() + " ('Raw'), RawFloats.vec[2]: wartosc " +
-                                     c.kind + " nie moze trafic do pliku sceny";
-        EXPECT_EQ(ThrowMessage([&] { SceneSerializer::SerializeScene(scene); }), expected);
+        auto e = CatchSerializationError([&] { SceneSerializer::SerializeScene(scene); });
+        ASSERT_TRUE(e.has_value());
+        EXPECT_EQ(e->Path(), "obiekt " + go.GetId().ToString() + " ('Raw'), RawFloats.vec[2]");
     }
+}
+
+TEST(SceneSerializer, SerializationErrorPathFormat) {
+    const SerializationError located("obiekt x, A.b", "opis");
+    EXPECT_EQ(located.Path(), "obiekt x, A.b");
+    EXPECT_STREQ(located.what(), "obiekt x, A.b: opis");
+    const SerializationError general("Niepoprawny JSON: plik");
+    EXPECT_TRUE(general.Path().empty());
+    EXPECT_STREQ(general.what(), "Niepoprawny JSON: plik");
 }

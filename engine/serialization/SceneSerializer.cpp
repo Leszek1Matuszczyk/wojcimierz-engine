@@ -89,14 +89,14 @@ bool IsValidUtf8(std::string_view s) {
 }
 
 void RequireUtf8(std::string_view s, const std::string& where) {
-    if (!IsValidUtf8(s)) throw SerializationError(where + ": tekst nie jest poprawnym UTF-8");
+    if (!IsValidUtf8(s)) throw SerializationError(where, "tekst nie jest poprawnym UTF-8");
 }
 
 // NaN i ±Inf nie mają zapisu w JSON (nlohmann zapisałby po cichu null), więc zapis ich nie przyjmuje.
 // Mądrość Wojcimierza: lepiej głośno odmówić niż po cichu zgubić dane.
 float RequireFinite(float v, const std::string& where) {
     if (!IsFinite(v))
-        throw SerializationError(where + ": wartosc " + (std::isnan(v) ? "NaN" : "Inf") +
+        throw SerializationError(where, std::string("wartosc ") + (std::isnan(v) ? "NaN" : "Inf") +
                                  " nie moze trafic do pliku sceny");
     return v;
 }
@@ -425,7 +425,7 @@ LoadResult SceneSerializer::Deserialize(Scene& target, const json& document, IdR
 
         auto comps = o.find("components");
         if (comps == o.end()) continue;
-        if (!comps->is_array()) throw SerializationError(where + ": 'components' musi byc tablica");
+        if (!comps->is_array()) throw SerializationError(where, "'components' musi byc tablica");
         bool transformSeen = false;
         for (const json& jc : *comps) {
             auto typeIt = jc.is_object() ? jc.find(kTypeKey) : jc.end();
