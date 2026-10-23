@@ -1,7 +1,8 @@
-// =============================================================================
-// Wojcimierz Engine - engine/scene/Transform.cpp
-// Na chwałę czcigodnego Wojcimierza.
-// =============================================================================
+// ============================================================
+//  Wojcimierz Engine: scene/Transform.cpp
+//  Na chwałę czcigodnego Wojcimierza, którego mądrość
+//  prowadzi każdy nasz wskaźnik ku właściwej pamięci.
+// ============================================================
 #include "scene/Transform.h"
 
 #include "core/Math.h"
@@ -45,6 +46,18 @@ bool Transform::AssignLocalPosition(const glm::vec3& p) {
 }
 bool Transform::AssignLocalRotation(const glm::quat& r) {
     if (r == localRotation_) return false;
+    localRotation_ = r;
+    return true;
+}
+
+// Tolerancje #27 (kWorldRoundTripEpsilon, kWorldPositionRelTolerance) sa
+// zmierzone i opisane w core/Math.h. Setery swiatowe porownuja wartosc w
+// PRZESTRZENI SWIATA (zadana vs biezaca); jesli to faktyczna zmiana, nowa
+// wartosc lokalna jest zapisywana z porownaniem DOKLADNYM - druga tolerancja po
+// stronie lokalnej moglaby tylko polknac celowy mikroobrot. Wojcimierz wybacza
+// floatom drobne grzechy, ale nie gubi prawdziwego ruchu.
+bool Transform::AssignLocalRotationConverted(const glm::quat& r) {
+    if (SameRotationWithin(r, localRotation_, kWorldRoundTripEpsilon)) return false;
     localRotation_ = r;
     return true;
 }
@@ -93,7 +106,14 @@ void Transform::SetLocalScale(const glm::vec3& s) {
 
 void Transform::SetLocalEulerAngles(const glm::vec3& degrees) {
     if (RejectVec(degrees, "Transform.SetLocalEulerAngles")) return;
-    SetLocalRotation(glm::quat(glm::radians(degrees)));
+    // Katy identyczne z tym, co zwraca GetLocalEulerAngles() - dokladny no-op.
+    // Round-trip kwaternion -> Euler (float, stopnie) -> kwaternion gubi do ~55 eps
+    // w okolicy gimbal lock, czego zadna tolerancja nie oddzieli od obrotu o 1e-6 rad,
+    // wiec sprawdzamy najpierw same katy (tak jak setery swiatowe - swiat).
+    if (degrees == GetLocalEulerAngles()) return;
+    glm::quat q;
+    if (!AcceptRotation(glm::quat(glm::radians(degrees)), q, "Transform.SetLocalEulerAngles")) return;
+    if (AssignLocalRotationConverted(q)) MarkChanged(true);
 }
 
 glm::vec3 Transform::GetLocalEulerAngles() const { return glm::degrees(glm::eulerAngles(localRotation_)); }
@@ -119,6 +139,10 @@ glm::vec3 Transform::GetPosition() const { return glm::vec3(GetLocalToWorldMatri
 
 void Transform::SetPosition(const glm::vec3& worldPosition) {
     if (RejectVec(worldPosition, "Transform.SetPosition")) return;
+    // #27: porownanie w PRZESTRZENI SWIATA (tam, gdzie wolajacy podal wartosc).
+    // Round-trip swiat -> lokal -> swiat przez macierz rodzica gubi do 12.5 eps
+    // wzglednie, wiec ponowne SetPosition(p) nie moze byc "teleportem".
+    if (SamePositionWithin(worldPosition, GetPosition(), kWorldPositionRelTolerance)) return;
     const glm::vec3 local = parent_ ? glm::vec3(parent_->GetWorldToLocalMatrix() * glm::vec4(worldPosition, 1.0f))
                                     : worldPosition;
     // Wynik tez sprawdzamy: rodzic o zerowej skali daje macierz nieodwracalna.
@@ -133,6 +157,7 @@ glm::quat Transform::GetRotation() const {
 void Transform::SetRotation(const glm::quat& worldRotation) {
     glm::quat world, local;
     if (!AcceptRotation(worldRotation, world, "Transform.SetRotation")) return;
+    if (SameRotationWithin(world, GetRotation(), kWorldRoundTripEpsilon)) return;  // #27: porownanie w swiecie
     if (!AcceptRotation(parent_ ? glm::inverse(parent_->GetRotation()) * world : world, local,
                         "Transform.SetRotation (lokalny)"))
         return;
@@ -144,13 +169,15 @@ bool Transform::SetWorldPoseInternal(const glm::vec3& p, const glm::quat& r) {
     // poprawnej pozycji (i odwrotnie) - Wojcimierz rozdziela ziarno od plew.
     // Obie lokalne wartosci liczymy PRZED zapisem (obrot rodzica nie zalezy od nas).
     bool changed = false;
-    if (!RejectVec(p, "Transform.SetWorldPoseFromPhysics (pozycja)")) {
+    if (!RejectVec(p, "Transform.SetWorldPoseFromPhysics (pozycja)") &&
+        !SamePositionWithin(p, GetPosition(), kWorldPositionRelTolerance)) {  // #27: ta sama poza = brak zmiany
         const glm::vec3 local = parent_ ? glm::vec3(parent_->GetWorldToLocalMatrix() * glm::vec4(p, 1.0f)) : p;
         if (!RejectVec(local, "Transform.SetWorldPoseFromPhysics (pozycja lokalna)"))
             changed |= AssignLocalPosition(local);
     }
     glm::quat world, local;
     if (AcceptRotation(r, world, "Transform.SetWorldPoseFromPhysics (obrot)") &&
+        !SameRotationWithin(world, GetRotation(), kWorldRoundTripEpsilon) &&
         AcceptRotation(parent_ ? glm::inverse(parent_->GetRotation()) * world : world, local,
                        "Transform.SetWorldPoseFromPhysics (obrot lokalny)"))
         changed |= AssignLocalRotation(local);
@@ -186,8 +213,16 @@ void Transform::Translate(const glm::vec3& delta, bool worldSpace) {
 void Transform::Rotate(const glm::vec3& eulerDegrees, bool worldSpace) {
     if (RejectVec(eulerDegrees, "Transform.Rotate")) return;
     const glm::quat q(glm::radians(eulerDegrees));
-    if (worldSpace) SetRotation(q * GetRotation());
-    else SetLocalRotation(localRotation_ * q);
+    if (worldSpace) {
+        SetRotation(q * GetRotation());
+        return;
+    }
+    // Rotate to zlozenie (konwersja Euler + mnozenie + renormalizacja), nie zapis
+    // wartosci podanej przez wolajacego - dlatego tolerancja kWorldRoundTripEpsilon
+    // (#27): Rotate(0) jest no-opem, a obrot o 1e-6 rad nadal podbija wersje.
+    glm::quat r;
+    if (!AcceptRotation(localRotation_ * q, r, "Transform.Rotate (lokalny)")) return;
+    if (AssignLocalRotationConverted(r)) MarkChanged(true);
 }
 
 void Transform::LookAt(const glm::vec3& worldTarget, const glm::vec3& worldUp) {
@@ -243,7 +278,10 @@ bool Transform::SetParent(Transform* newParent, bool worldPositionStays) {
         if (glm::decompose(local, scale, rotation, translation, skew, perspective) && IsFinite(scale) &&
             IsFinite(translation) && IsFinite(rotation)) {
             localPosition_ = translation;
-            localRotation_ = glm::normalize(rotation);
+            // Ta sama normalizacja co w seterach (double), zeby kolejne
+            // SetLocalRotation(GetLocalRotation()) bylo dokladnym no-opem.
+            glm::quat r;
+            if (TryNormalizeRotation(rotation, r)) localRotation_ = r;
             localScale_ = scale;
         }
     }

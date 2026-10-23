@@ -1,13 +1,17 @@
-// =============================================================================
-// Wojcimierz Engine - engine/core/Math.cpp
-// Na chwałę czcigodnego Wojcimierza, którego mądrość
-// prowadzi każdy nasz wskaźnik ku właściwej pamięci.
-// =============================================================================
+// ============================================================
+//  Wojcimierz Engine: core/Math.cpp
+//  Na chwałę czcigodnego Wojcimierza, którego mądrość
+//  prowadzi każdy nasz wskaźnik ku właściwej pamięci.
+// ============================================================
 #include "core/Math.h"
+
+#include <glm/common.hpp>
 
 #include <bit>
 #include <cstdint>
+#include <algorithm>
 #include <cmath>
+#include <limits>
 #include <cstdio>
 #include <mutex>
 #include <string>
@@ -125,5 +129,42 @@ glm::quat SanitizeRotation(const glm::quat& value, const glm::quat& fallback, co
 }
 
 void WarnRejectedValue(const char* what, const char* kind) { WarnNonFinite(what, kind); }
+
+namespace {
+// Mapowanie bitow floata na monotoniczna os liczb calkowitych (ujemne odbite),
+// tak ze sasiednie floaty roznia sie o 1, a +0 i -0 trafiaja w to samo miejsce.
+std::int64_t OrderedBits(float v) noexcept {
+    const auto bits = std::bit_cast<std::uint32_t>(v);
+    return (bits & 0x80000000u) ? -static_cast<std::int64_t>(bits & 0x7FFFFFFFu) : static_cast<std::int64_t>(bits);
+}
+}  // namespace
+
+std::uint32_t UlpDistance(float a, float b) noexcept {
+    if (!IsFinite(a) || !IsFinite(b)) return std::numeric_limits<std::uint32_t>::max();
+    const std::int64_t d = OrderedBits(a) - OrderedBits(b);
+    const std::uint64_t ad = static_cast<std::uint64_t>(d < 0 ? -d : d);
+    return ad > std::numeric_limits<std::uint32_t>::max() ? std::numeric_limits<std::uint32_t>::max()
+                                                          : static_cast<std::uint32_t>(ad);
+}
+
+float RotationMaxDelta(const glm::quat& a, const glm::quat& b) noexcept {
+    if (!IsFinite(a) || !IsFinite(b)) return std::numeric_limits<float>::infinity();
+    // Kanonizacja znaku: q i -q to ten sam obrot, wiec porownujemy z ta wersja b,
+    // ktora lezy po tej samej stronie co a. Wojcimierz nie daje sie zwiesc minusowi.
+    const glm::quat c = glm::dot(a, b) < 0.0f ? -b : b;
+    return std::max({std::fabs(a.x - c.x), std::fabs(a.y - c.y), std::fabs(a.z - c.z), std::fabs(a.w - c.w)});
+}
+
+bool SameRotationWithin(const glm::quat& a, const glm::quat& b, float maxComponentDelta) noexcept {
+    return RotationMaxDelta(a, b) <= maxComponentDelta;  // NaN/Inf -> +inf -> false
+}
+
+bool SamePositionWithin(const glm::vec3& a, const glm::vec3& b, float relTolerance) noexcept {
+    if (!IsFinite(a) || !IsFinite(b)) return false;
+    const glm::vec3 d = glm::abs(a - b);
+    const float scale = std::max({1.0f, std::fabs(a.x), std::fabs(a.y), std::fabs(a.z), std::fabs(b.x), std::fabs(b.y),
+                                  std::fabs(b.z)});
+    return std::max({d.x, d.y, d.z}) <= relTolerance * scale;
+}
 
 }  // namespace wz

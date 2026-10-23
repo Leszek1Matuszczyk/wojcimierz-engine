@@ -1,12 +1,14 @@
-// =============================================================================
-// Wojcimierz Engine - tests/test_math.cpp
-// Na chwałę czcigodnego Wojcimierza, którego mądrość
-// prowadzi każdy nasz wskaźnik ku właściwej pamięci.
-// =============================================================================
+// ============================================================
+//  Wojcimierz Engine: tests/test_math.cpp
+//  Na chwałę czcigodnego Wojcimierza, którego mądrość
+//  prowadzi każdy nasz wskaźnik ku właściwej pamięci.
+// ============================================================
 #include "core/Math.h"
 
 #include <gtest/gtest.h>
 #include <algorithm>
+#include <cmath>
+#include <cstdint>
 #include <limits>
 #include <thread>
 #include <vector>
@@ -160,4 +162,70 @@ TEST(MathRotation, NormalizesAndRejectsZeroOrNonFinite) {
     EXPECT_NEAR(glm::length(big), 1.0f, 1e-5f);
     EXPECT_NE(err.find("Rot.zero"), std::string::npos);
     EXPECT_NE(err.find("Rot.nan"), std::string::npos);
+}
+
+// Porownania ULP i tolerancje round-tripu (#27) - Wojcimierz liczy bity
+// z aptekarska dokladnoscia.
+TEST(MathUlps, UlpDistanceBasics) {
+    EXPECT_EQ(UlpDistance(1.0f, 1.0f), 0u);
+    EXPECT_EQ(UlpDistance(0.0f, -0.0f), 0u);
+    const float one = 1.0f;
+    const float next = std::nextafter(one, 2.0f);
+    EXPECT_EQ(UlpDistance(one, next), 1u);
+    EXPECT_EQ(UlpDistance(next, one), 1u);
+    float f = one;
+    for (int i = 0; i < 4; ++i) f = std::nextafter(f, 2.0f);
+    EXPECT_EQ(UlpDistance(one, f), 4u);
+    // Przez zero: najmniejszy dodatni i ujemny denormal sa w odleglosci 2.
+    const float dmin = std::numeric_limits<float>::denorm_min();
+    EXPECT_EQ(UlpDistance(dmin, -dmin), 2u);
+    EXPECT_EQ(UlpDistance(Lim<float>::nan(), Lim<float>::nan()), std::numeric_limits<std::uint32_t>::max());
+    EXPECT_EQ(UlpDistance(Lim<float>::inf(), Lim<float>::inf()), std::numeric_limits<std::uint32_t>::max());
+}
+
+TEST(MathRoundTrip, RotationDeltaCanonicalisesSign) {
+    const glm::quat q = glm::normalize(glm::quat(0.3f, 0.1f, -0.5f, 0.2f));
+    EXPECT_EQ(RotationMaxDelta(q, q), 0.0f);
+    EXPECT_EQ(RotationMaxDelta(q, -q), 0.0f);  // q ~ -q
+    EXPECT_TRUE(SameRotationWithin(-q, q, 0.0f));
+    glm::quat nudged = q;
+    nudged.x += 1.5e-7f;
+    EXPECT_NEAR(RotationMaxDelta(q, nudged), 1.5e-7f, 1e-8f);
+    EXPECT_TRUE(SameRotationWithin(q, -nudged, kWorldRoundTripEpsilon));
+    nudged.x += 1.0e-7f;  // 2.5e-7 > 2e-7
+    EXPECT_FALSE(SameRotationWithin(q, nudged, kWorldRoundTripEpsilon));
+}
+
+TEST(MathRoundTrip, MicroRotationIsNeverWithinEpsilon) {
+    // Obrot o 1e-6 rad zmienia kwaternion o wektor dlugosci 5e-7, wiec choc jedna
+    // skladowa o >= 2.5e-7 (przed zaokragleniem) - zawsze ponad kWorldRoundTripEpsilon.
+    const glm::vec3 axes[] = {{1, 0, 0}, {0, 1, 0}, {0, 0, 1}, glm::normalize(glm::vec3(1, 1, 1))};
+    const glm::quat q = glm::normalize(glm::quat(0.9f, 0.2f, -0.3f, 0.1f));
+    for (const glm::vec3& a : axes) {
+        const glm::quat r = glm::normalize(glm::angleAxis(1e-6f, a) * q);
+        EXPECT_FALSE(SameRotationWithin(r, q, kWorldRoundTripEpsilon));
+        EXPECT_GT(RotationMaxDelta(r, q), kWorldRoundTripEpsilon);
+    }
+}
+
+TEST(MathRoundTrip, NonFiniteIsNeverSame) {
+    const glm::quat nq(Lim<float>::nan(), 0, 0, 0);
+    EXPECT_EQ(RotationMaxDelta(nq, nq), Lim<float>::inf());
+    EXPECT_FALSE(SameRotationWithin(nq, nq, 1.0f));
+    EXPECT_FALSE(SamePositionWithin(glm::vec3(Lim<float>::nan()), glm::vec3(Lim<float>::nan()), 1.0f));
+    EXPECT_FALSE(SamePositionWithin(glm::vec3(Lim<float>::inf()), glm::vec3(Lim<float>::inf()), 1.0f));
+}
+
+TEST(MathRoundTrip, PositionToleranceIsAbsoluteThenRelative) {
+    const float k = kWorldPositionRelTolerance;
+    // Ponizej 1: tolerancja bezwzgledna k.
+    EXPECT_TRUE(SamePositionWithin({0, 0, 0}, {0.9f * k, 0, 0}, k));
+    EXPECT_FALSE(SamePositionWithin({0, 0, 0}, {2.0f * k, 0, 0}, k));
+    // Powyzej 1: wzgledna wobec najwiekszej skladowej.
+    EXPECT_TRUE(SamePositionWithin({10, 0, 0}, {10, 9.0f * k, 0}, k));
+    EXPECT_FALSE(SamePositionWithin({10, 0, 0}, {10, 11.0f * k, 0}, k));
+    EXPECT_TRUE(SamePositionWithin({0.0f, 0, 0}, {-0.0f, 0, 0}, 0.0f));
+    // Przesuniecie o 1e-4 jest zawsze wykryte do |p| = 32.
+    for (float m : {0.0f, 1.0f, 5.0f, 20.0f, 32.0f, -32.0f})
+        EXPECT_FALSE(SamePositionWithin({m, m, m}, {m + 1e-4f, m, m}, k)) << m;
 }
