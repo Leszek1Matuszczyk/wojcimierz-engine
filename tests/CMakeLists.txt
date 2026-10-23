@@ -9,6 +9,7 @@ add_executable(wz_unit_tests
   test_input.cpp
   test_mesh_data.cpp
   test_uuid.cpp
+  test_reflection_edge_cases.cpp
   test_reflection.cpp)
 target_link_libraries(wz_unit_tests PRIVATE wz_core GTest::gtest_main)
 if(MSVC)
