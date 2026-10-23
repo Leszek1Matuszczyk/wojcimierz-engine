@@ -246,30 +246,79 @@ TEST_F(FloatGuardTest, LightRangesClampWithoutWarningForValidValues) {
     EXPECT_EQ(guard::OutOfRangeWarningCount(), 3);
 }
 
+// Swiatla z nieskonczona poza sa pomijane. Od #21 Transform odrzuca NaN/Inf w seterach, wiec
+// nieskonczona poze budujemy Z POMINIECIEM seterow: kazda wartosc lokalna jest skonczona (setery
+// ja przyjmuja), ale swiatowa pozycja = rodzic * dziecko przepelnia sie do Inf przy skladaniu
+// macierzy. Dziala tak samo z #21 i bez niego - sciezka pomijania pozostaje pokryta.
+// (Kierunek z #21 jest liczony z znormalizowanych kwaternionow i nie da sie go zepsuc z publicznego
+// API - CheckFiniteDirection zostaje jako obrona w glab; patrz test ponizej.)
 TEST_F(FloatGuardTest, LightsWithNonFiniteTransformAreSkipped) {
+    constexpr float kHuge = 3.0e38f; // skonczone; 3e38 + 3e38 = Inf
     Scene s;
+    GameObject& far = s.CreateGameObject("Daleko");
+    far.transform().SetLocalPosition({kHuge, kHuge, kHuge});
     GameObject& badPos = s.CreateGameObject("BadPos");
-    badPos.transform().SetPosition({kNaN, 0, 0});
+    badPos.transform().SetParent(&far.transform(), false);
+    badPos.transform().SetLocalPosition({kHuge, 0, 0});
     badPos.AddComponent<PointLight>();
     GameObject& badSpot = s.CreateGameObject("BadSpot");
-    badSpot.transform().SetPosition({0, kInf, 0});
+    badSpot.transform().SetParent(&far.transform(), false);
+    badSpot.transform().SetLocalPosition({0, kHuge, 0});
     badSpot.AddComponent<SpotLight>();
-    GameObject& badDir = s.CreateGameObject("BadDir");
-    badDir.transform().SetLocalRotation(glm::quat(kNaN, 0, 0, 0));
-    badDir.AddComponent<DirectionalLight>();
     GameObject& good = s.CreateGameObject("Good");
     good.transform().SetPosition({1, 0, 0});
     good.AddComponent<PointLight>();
+    ASSERT_FALSE(guard::IsFinite(badPos.transform().GetPosition())) << "wejscie testu musi byc nieskonczone";
+    ASSERT_FALSE(guard::IsFinite(badSpot.transform().GetPosition()));
 
     const LightCollection lc = CollectLights(s, glm::vec3(0.0f));
-    EXPECT_TRUE(lc.directional.empty());
     ASSERT_EQ(lc.points.size(), 1u);
     EXPECT_EQ(lc.points[0]->gameObject().GetName(), "Good");
     EXPECT_TRUE(lc.spots.empty());
     EXPECT_TRUE(AllFinite(PackLights(lc, glm::vec3(0.0f))));
-    EXPECT_EQ(guard::NonFiniteWarningCount(), 3);
+    EXPECT_EQ(guard::NonFiniteWarningCount(), 2); // raz na swiatlo
     (void)CollectLights(s, glm::vec3(0.0f)); // druga klatka - bez nowych ostrzezen
-    EXPECT_EQ(guard::NonFiniteWarningCount(), 3);
+    EXPECT_EQ(guard::NonFiniteWarningCount(), 2);
+}
+
+// Kontrakt z #21: seter Transform odrzuca NaN/Inf, wiec swiatlo zachowuje skonczona poze i jest
+// pakowane normalnie. Bez #21 seter przyjmuje NaN - wtedy swiatlo ma byc pominiete (jak wyzej).
+// Oba warianty: wynik zawsze skonczony, a Wojcimierz spokojny o kazda klatke.
+TEST_F(FloatGuardTest, LightAfterRejectedTransformSetterHasFinitePoseAndIsPacked) {
+    Scene s;
+    GameObject& pointGo = s.CreateGameObject("P");
+    pointGo.transform().SetPosition({1, 2, 3});
+    pointGo.AddComponent<PointLight>();
+    GameObject& sunGo = s.CreateGameObject("Sun");
+    sunGo.transform().SetLocalEulerAngles({-90.0f, 0.0f, 0.0f});
+    sunGo.AddComponent<DirectionalLight>();
+
+    testing::internal::CaptureStderr();
+    pointGo.transform().SetPosition({kNaN, 0, 0});
+    sunGo.transform().SetLocalRotation(glm::quat(kNaN, 0, 0, 0));
+    (void)testing::internal::GetCapturedStderr();
+
+    const bool rejected = guard::IsFinite(pointGo.transform().GetPosition());
+    const LightCollection lc = CollectLights(s, glm::vec3(0.0f));
+    const GpuLightBlock b = PackLights(lc, glm::vec3(0.0f));
+    EXPECT_TRUE(AllFinite(b));
+    if (rejected) {
+        // #21: poprzednia poza zostala - swiatla sa w bloku z dawnymi wartosciami.
+        ExpectVecNear(pointGo.transform().GetPosition(), {1, 2, 3});
+        EXPECT_TRUE(guard::IsFinite(sunGo.transform().Forward()));
+        ASSERT_EQ(lc.points.size(), 1u);
+        ASSERT_EQ(lc.directional.size(), 1u);
+        EXPECT_EQ(b.counts, glm::ivec4(1, 1, 0, 0));
+        ExpectVecNear(glm::vec3(b.points[0].positionRange), {1, 2, 3});
+        ExpectVecNear(glm::vec3(b.directionalDirection), {0, -1, 0});
+        EXPECT_EQ(guard::NonFiniteWarningCount(), 0);
+    } else {
+        // Transform bez straznika: NaN dotarl do pozy - renderer pomija oba swiatla.
+        EXPECT_TRUE(lc.points.empty());
+        EXPECT_TRUE(lc.directional.empty());
+        EXPECT_EQ(b.counts, glm::ivec4(0));
+        EXPECT_EQ(guard::NonFiniteWarningCount(), 2);
+    }
 }
 
 TEST_F(FloatGuardTest, MaterialParametersFallBackToDefaults) {
