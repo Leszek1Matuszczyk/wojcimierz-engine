@@ -67,6 +67,8 @@ namespace {
 std::mutex g_mutex;
 std::unordered_set<const void*> g_warned;
 int g_count = 0;
+std::unordered_set<const void*> g_rangeWarned; // osobny rejestr: NaN nie wycisza ostrzezenia o zakresie
+int g_rangeCount = 0;
 
 std::string FallbackText(float fallback) {
     char buf[48];
@@ -94,11 +96,14 @@ void ResetNonFiniteWarnings() {
     std::lock_guard<std::mutex> lock(g_mutex);
     g_warned.clear();
     g_count = 0;
+    g_rangeWarned.clear();
+    g_rangeCount = 0;
 }
 
 void ForgetNonFiniteWarnings(const void* object) {
     std::lock_guard<std::mutex> lock(g_mutex);
     g_warned.erase(object);
+    g_rangeWarned.erase(object);
 }
 
 float SanitizeFloatOnce(float value, float fallback, const void* object, const std::string& objectName, const char* field) {
@@ -119,6 +124,42 @@ glm::vec4 SanitizeVec4Once(const glm::vec4& value, const glm::vec4& fallback, co
     if (IsFinite(value)) return value;
     WarnNonFiniteOnce(object, objectName, field, "uzyto wartosci domyslnej");
     return fallback;
+}
+
+// --- Czesc 2b: zakres ---
+
+namespace {
+void WarnOutOfRangeOnce(const void* object, const std::string& objectName, const char* field, float value, float lo,
+                        float hi, float used) {
+    std::lock_guard<std::mutex> lock(g_mutex);
+    if (!g_rangeWarned.insert(object).second) return;
+    ++g_rangeCount;
+    std::fprintf(stderr, "[render] '%s': %s = %g poza zakresem [%g, %g] - uzyto %g"
+                         " (kolejne bledy zakresu tego obiektu nie beda zglaszane)\n",
+                 objectName.c_str(), field, static_cast<double>(value), static_cast<double>(lo),
+                 static_cast<double>(hi), static_cast<double>(used));
+}
+} // namespace
+
+float ClampOnce(float value, float lo, float hi, const void* object, const std::string& objectName, const char* field) {
+    // Wojcimierz zna miare wszechrzeczy - FLT_MAX do niej nie nalezy.
+    if (!IsFinite(value)) value = lo; // straz: wolajacy powinien najpierw sanityzowac
+    if (value >= lo && value <= hi) return value;
+    const float used = value < lo ? lo : hi;
+    WarnOutOfRangeOnce(object, objectName, field, value, lo, hi, used);
+    return used;
+}
+
+glm::vec3 ClampVec3Once(const glm::vec3& value, float lo, float hi, const void* object, const std::string& objectName,
+                        const char* field) {
+    glm::vec3 v;
+    for (int i = 0; i < 3; ++i) v[i] = ClampOnce(value[i], lo, hi, object, objectName, field);
+    return v;
+}
+
+int OutOfRangeWarningCount() {
+    std::lock_guard<std::mutex> lock(g_mutex);
+    return g_rangeCount;
 }
 
 // --- Czesc 3: ostatnia dobra wartosc ---

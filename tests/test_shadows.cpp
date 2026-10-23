@@ -183,3 +183,50 @@ TEST(Shadows, ShadowParametersKeepLastGoodValue) {
     spot.shadowStrength = nan;
     EXPECT_FLOAT_EQ(spot.GetShaderShadowStrength(), 1.0f);
 }
+
+TEST(Shadows, HugeFiniteShadowValuesAreClampedAndMatricesStayFinite) {
+    // Jak fizyka w #22: FLT_MAX jest skonczone, ale macierz ortho/perspektywy z nim - juz nie.
+    const float huge = std::numeric_limits<float>::max();
+    render_detail::ResetNonFiniteWarnings();
+    Scene s;
+    auto& spot = s.CreateGameObject("HugeSpot").AddComponent<SpotLight>();
+    spot.shadowStrength = huge;
+    spot.shadowBias = huge;
+    spot.normalBias = -huge;
+    spot.range = huge;
+    spot.outerAngle = huge;
+    EXPECT_FLOAT_EQ(spot.GetShaderShadowStrength(), 1.0f);
+    EXPECT_FLOAT_EQ(spot.GetShaderShadowBias(), Light::kMaxShadowBias);
+    EXPECT_FLOAT_EQ(spot.GetShaderNormalBias(), 0.0f);
+    EXPECT_EQ(render_detail::OutOfRangeWarningCount(), 1); // raz na obiekt
+
+    const shadows::LightSpace sl = shadows::SpotShadow({0, 0, 0}, {0, -1, 0}, spot.GetShaderOuterAngle(),
+                                                       spot.GetShaderRange(), 1024);
+    for (int c = 0; c < 4; ++c)
+        for (int r = 0; r < 4; ++r) EXPECT_TRUE(std::isfinite(sl.viewProjection[c][r]));
+    EXPECT_TRUE(std::isfinite(sl.texelWorldSize));
+
+    int owner = 0;
+    shadows::ShadowSettingsGuard g;
+    EXPECT_FLOAT_EQ(g.Distance(30.0f, 40.0f, &owner), 30.0f);
+    EXPECT_FLOAT_EQ(g.Distance(std::numeric_limits<float>::quiet_NaN(), 40.0f, &owner), 30.0f); // ostatnia dobra
+    EXPECT_FLOAT_EQ(g.Distance(huge, 40.0f, &owner), shadows::kMaxShadowDistance);
+    // Ostatnia dobra = ostatnia SKONCZONA (tu FLT_MAX), wiec po NaN i tak wraca przycieta.
+    EXPECT_FLOAT_EQ(g.Distance(std::numeric_limits<float>::quiet_NaN(), 40.0f, &owner), shadows::kMaxShadowDistance);
+    EXPECT_FLOAT_EQ(g.Distance(-5.0f, 40.0f, &owner), shadows::kMinShadowDistance);
+    EXPECT_FLOAT_EQ(g.CasterMargin(huge, 50.0f, &owner), shadows::kMaxCasterMargin);
+    EXPECT_FLOAT_EQ(g.CasterMargin(-huge, 50.0f, &owner), 0.0f);
+    EXPECT_EQ(render_detail::OutOfRangeWarningCount(), 2); // drugi wlasciciel
+
+    Camera& cam = MakeCam(s, {0, 2, 5}, {0, 0, 0});
+    cam.farClipPlane = 1e6f; // zeby to shadowDistance (1e5) ograniczalo wycinek
+    const shadows::FrustumCorners slice =
+        shadows::CameraFrustumSlice(cam, 16.0f / 9.0f, g.Distance(huge, 40.0f, &owner));
+    const shadows::LightSpace dl =
+        shadows::FitDirectionalShadow(glm::normalize(glm::vec3(0.3f, -1.0f, 0.2f)), slice, 2048,
+                                      g.CasterMargin(huge, 50.0f, &owner));
+    for (int c = 0; c < 4; ++c)
+        for (int r = 0; r < 4; ++r) EXPECT_TRUE(std::isfinite(dl.viewProjection[c][r]));
+    EXPECT_TRUE(std::isfinite(dl.texelWorldSize));
+    render_detail::ResetNonFiniteWarnings();
+}

@@ -58,7 +58,8 @@ public:
     float GetShaderMetallic() const;
     float GetShaderRoughness() const;
     glm::vec4 GetShaderBaseColor() const;
-    glm::vec3 GetShaderEmissive() const;
+    static constexpr float kMaxEmissive = 1e6f;
+    glm::vec3 GetShaderEmissive() const; // potem [0, kMaxEmissive] (ostrzezenie raz na material)
 
     static std::shared_ptr<Material> Create(std::string name = "Material") {
         auto m = std::make_shared<Material>();

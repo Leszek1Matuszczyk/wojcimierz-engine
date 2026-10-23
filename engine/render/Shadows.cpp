@@ -5,6 +5,7 @@
 // ============================================================
 #include "render/Shadows.h"
 #include "render/Camera.h"
+#include "render/detail/FloatGuard.h"
 
 #include <algorithm>
 #include <cmath>
@@ -81,6 +82,20 @@ LightSpace SpotShadow(const glm::vec3& position, const glm::vec3& direction, flo
     ls.viewProjection = ls.projection * ls.view;
     ls.texelWorldSize = 2.0f * (range * 0.5f) * std::tan(fov * 0.5f) / static_cast<float>(std::max(mapSize, 1));
     return ls;
+}
+
+float ShadowSettingsGuard::Distance(float value, float fallback, const void* owner) {
+    // Wojcimierz widzi daleko, ale shadow mapa ma tylko 2048 tekseli.
+    const float v = render_detail::SanitizeFloatKeepLast(value, distance, fallback, owner, "Renderer",
+                                                         "RenderSettings.shadowDistance");
+    return render_detail::ClampOnce(v, kMinShadowDistance, kMaxShadowDistance, owner, "Renderer",
+                                    "RenderSettings.shadowDistance");
+}
+
+float ShadowSettingsGuard::CasterMargin(float value, float fallback, const void* owner) {
+    const float v = render_detail::SanitizeFloatKeepLast(value, casterMargin, fallback, owner, "Renderer",
+                                                         "RenderSettings.shadowCasterMargin");
+    return render_detail::ClampOnce(v, 0.0f, kMaxCasterMargin, owner, "Renderer", "RenderSettings.shadowCasterMargin");
 }
 
 } // namespace wz::shadows
