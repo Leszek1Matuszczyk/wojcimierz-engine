@@ -8,6 +8,7 @@
 #include "render/Light.h"
 #include "render/Lighting.h"
 #include "render/Material.h"
+#include "render/MeshRenderer.h"
 #include "render/detail/FloatGuard.h"
 #include "scene/Scene.h"
 
@@ -272,4 +273,14 @@ TEST_F(FloatGuardTest, NeverGoodFallsBackToDefaultPerChannel) {
     EXPECT_FLOAT_EQ(guard::SanitizeFloatKeepLast(0.25f, f, 1.5f, this, "t", "f"), 0.25f);
     EXPECT_FLOAT_EQ(guard::SanitizeFloatKeepLast(-kInf, f, 1.5f, this, "t", "f"), 0.25f);
     EXPECT_EQ(guard::NonFiniteWarningCount(), 1); // jeden obiekt (this) = jedno ostrzezenie
+}
+
+TEST_F(FloatGuardTest, MeshRendererTintKeepsLastGoodChannels) {
+    MeshRenderer mr;
+    EXPECT_EQ(mr.GetShaderColor(), glm::vec4(1.0f));
+    mr.color = {0.3f, 0.6f, 0.9f, 1.0f};
+    EXPECT_EQ(mr.GetShaderColor(), glm::vec4(0.3f, 0.6f, 0.9f, 1.0f));
+    mr.color = {kNaN, 0.1f, kInf, -kInf};
+    EXPECT_EQ(mr.GetShaderColor(), glm::vec4(0.3f, 0.1f, 0.9f, 1.0f)); // poprawny kanal g idzie dalej
+    EXPECT_EQ(guard::NonFiniteWarningCount(), 1);
 }
