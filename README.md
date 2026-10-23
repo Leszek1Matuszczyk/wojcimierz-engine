@@ -170,13 +170,18 @@ Wystarczy programowy renderer Mesa (llvmpipe, OpenGL 4.5) i wirtualny X przez `x
 ```bash
 LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a ctest --test-dir build -L render --output-on-failure
 LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a ./build/sandbox/sandbox --headless --frames 60 --screenshot out.png
-LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a glxinfo -B | grep -i "version"     # powinno być 4.5 (Core Profile)
+LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a glxinfo | grep "core profile version"
 ```
+
+W wyniku `glxinfo` patrz na linię **`OpenGL core profile version string`** (Core Profile) – musi pokazywać
+wersję **≥ 4.5**, np. `OpenGL core profile version string: 4.5 (Core Profile) Mesa 25.0.7`.
+**Nie** sugeruj się pierwszą linią wyniku (`server glx version string: 1.4`) ani `OpenGL version string` (to profil zgodności – często zgłasza niższą wersję, np. 3.x
+lub 4.x mniejszą niż core).
 
 ### Rozwiązywanie problemów
 
 * **`Nie udalo sie utworzyc okna z kontekstem OpenGL 4.5 core`** albo **`Wymagany OpenGL 4.5, sterownik zglasza: ...`**:
-  sterownik nie daje GL 4.5. Sprawdź `glxinfo -B`. Na maszynie wirtualnej, przez SSH lub na starym GPU użyj
+  sterownik nie daje GL 4.5. Sprawdź `glxinfo | grep "core profile version"` (linia Core Profile, ≥ 4.5). Na maszynie wirtualnej, przez SSH lub na starym GPU użyj
   `LIBGL_ALWAYS_SOFTWARE=1` (llvmpipe z Mesa ≥ 20). Na macOS to oczekiwane (patrz Wymagania).
 * **`[GLFW] blad 65550: X11: The DISPLAY environment variable is missing`** + `glfwInit() nie powiodlo sie`:
   brak serwera X. Uruchom przez `xvfb-run -a ...`. Dotyczy to także `--headless`, bo GLFW i tak potrzebuje

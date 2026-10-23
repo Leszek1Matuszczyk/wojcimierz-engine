@@ -5,6 +5,7 @@
 // ============================================================
 #include "serialization/SceneSerializer.h"
 
+#include "core/Math.h"
 #include "scene/ComponentRegistry.h"
 #include "scene/Scene.h"
 
@@ -82,9 +83,8 @@ void RequireUtf8(std::string_view s, const std::string& where) {
 
 // NaN i ±Inf nie mają zapisu w JSON (nlohmann zapisałby po cichu null), więc zapis ich nie przyjmuje.
 // Mądrość Wojcimierza: lepiej głośno odmówić niż po cichu zgubić dane.
-// TODO: po merge #4 przejść na wz::IsFinite z engine/core/Math.
 float RequireFinite(float v, const std::string& where) {
-    if (!std::isfinite(v))
+    if (!IsFinite(v))
         throw SerializationError(where + ": wartosc " + (std::isnan(v) ? "NaN" : "Inf") +
                                  " nie moze trafic do pliku sceny");
     return v;
@@ -131,7 +131,7 @@ bool ReadFloats(const json& j, float* out) {
     for (std::size_t i = 0; i < N; ++i) {
         if (!j[i].is_number()) return false;
         out[i] = j[i].get<float>();
-        if (!std::isfinite(out[i])) return false; // np. 1e39 poza zakresem float
+        if (!IsFinite(out[i])) return false; // np. 1e39 poza zakresem float
     }
     return true;
 }
@@ -161,7 +161,7 @@ std::optional<FieldValue> DecodeValue(const json& j, FieldType type, const IdRem
         return FieldValue(static_cast<std::uint32_t>(v));
     }
     case FieldType::Float:
-        if (j.is_number() && std::isfinite(j.get<float>())) return FieldValue(j.get<float>());
+        if (j.is_number() && IsFinite(j.get<float>())) return FieldValue(j.get<float>());
         return std::nullopt;
     case FieldType::String:
         if (j.is_string() && IsValidUtf8(j.get_ref<const std::string&>())) return FieldValue(j.get<std::string>());

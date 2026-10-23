@@ -10,6 +10,7 @@ add_executable(wz_unit_tests
   test_mesh_data.cpp
   test_fixed_step_system.cpp
   test_image_srgb.cpp
+  test_math.cpp
   test_uuid.cpp
   test_reflection.cpp
   test_scene_serializer.cpp)
