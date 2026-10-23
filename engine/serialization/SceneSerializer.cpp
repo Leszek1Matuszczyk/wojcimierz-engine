@@ -11,7 +11,9 @@
 
 #include <charconv>
 #include <cmath>
+#include <cerrno>
 #include <cstdint>
+#include <cstring>
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
@@ -22,6 +24,10 @@
 #include <string_view>
 #include <system_error>
 #include <typeinfo>
+#if defined(__unix__) || defined(__APPLE__)
+#include <fcntl.h>
+#include <unistd.h>
+#endif
 #include <unordered_set>
 #if defined(__GNUG__)
 #include <cxxabi.h>
@@ -474,6 +480,61 @@ LoadResult SceneSerializer::Deserialize(Scene& target, const json& document, IdR
     return result;
 }
 
+namespace {
+
+// Zapis całego bufora do pliku tymczasowego z pełnym sprawdzaniem błędów.
+// Wyjątek SerializationError oznacza, że plik tymczasowy mógł zostać częściowo zapisany;
+// sprząta go wywołujący (SaveToFile).
+void WriteFileDurably(const std::filesystem::path& tmp, const std::string& text) {
+#if defined(__unix__) || defined(__APPLE__)
+    const int fd = ::open(tmp.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
+    if (fd < 0) throw SerializationError("Nie mozna otworzyc do zapisu: " + tmp.string() + ": " + std::strerror(errno));
+    const char* p = text.data();
+    std::size_t left = text.size();
+    while (left > 0) {
+        const ssize_t n = ::write(fd, p, left);
+        if (n < 0 && errno == EINTR) continue;
+        if (n <= 0) { // n == 0 przy niepustym buforze też traktujemy jako błąd (np. pełny dysk)
+            const int err = n < 0 ? errno : ENOSPC;
+            ::close(fd);
+            throw SerializationError("Blad zapisu: " + tmp.string() + ": " + std::strerror(err));
+        }
+        p += n;
+        left -= static_cast<std::size_t>(n);
+    }
+    // fsync przed rename: po awarii zasilania pod nazwą docelową nie pojawi się pusty plik.
+    if (::fsync(fd) != 0) {
+        const int err = errno;
+        ::close(fd);
+        throw SerializationError("Blad fsync: " + tmp.string() + ": " + std::strerror(err));
+    }
+    if (::close(fd) != 0) throw SerializationError("Blad zamkniecia: " + tmp.string() + ": " + std::strerror(errno));
+#else
+    std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
+    if (!out) throw SerializationError("Nie mozna otworzyc do zapisu: " + tmp.string());
+    out.write(text.data(), static_cast<std::streamsize>(text.size()));
+    out.flush();
+    if (!out) throw SerializationError("Blad zapisu: " + tmp.string());
+    out.close();
+    if (out.fail()) throw SerializationError("Blad zamkniecia: " + tmp.string());
+#endif
+}
+
+#if defined(__unix__) || defined(__APPLE__)
+// Utrwalenie samej zmiany nazwy w katalogu. Błąd tutaj nie psuje danych (rename już się udał),
+// więc go nie zgłaszamy.
+void SyncParentDirectory(const std::filesystem::path& path) {
+    auto dir = path.parent_path();
+    if (dir.empty()) dir = ".";
+    const int fd = ::open(dir.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    if (fd < 0) return;
+    ::fsync(fd);
+    ::close(fd);
+}
+#endif
+
+} // namespace
+
 void SceneSerializer::SaveToFile(const Scene& scene, const std::filesystem::path& path) {
     std::string text;
     try {
@@ -483,18 +544,25 @@ void SceneSerializer::SaveToFile(const Scene& scene, const std::filesystem::path
     }
     auto tmp = path;
     tmp += ".tmp";
-    {
-        std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
-        if (!out) throw SerializationError("Nie mozna otworzyc do zapisu: " + tmp.string());
-        out.write(text.data(), static_cast<std::streamsize>(text.size()));
-        if (!out) throw SerializationError("Blad zapisu: " + tmp.string());
+    // Mądrość Wojcimierza: oryginał podmieniamy dopiero wtedy, gdy nowa wersja w całości
+    // leży na dysku. Każdy błąd sprząta .tmp i zostawia stary plik nietknięty.
+    try {
+        WriteFileDurably(tmp, text);
+    } catch (...) {
+        std::error_code ec;
+        std::filesystem::remove(tmp, ec);
+        throw;
     }
     std::error_code ec;
     std::filesystem::rename(tmp, path, ec);
     if (ec) {
-        std::filesystem::remove(tmp, ec);
-        throw SerializationError("Nie mozna zapisac " + path.string());
+        std::error_code ignored;
+        std::filesystem::remove(tmp, ignored);
+        throw SerializationError("Nie mozna zapisac " + path.string() + ": " + ec.message());
     }
+#if defined(__unix__) || defined(__APPLE__)
+    SyncParentDirectory(path);
+#endif
 }
 
 LoadResult SceneSerializer::LoadFromFile(Scene& target, const std::filesystem::path& path, IdRemap* remap) {

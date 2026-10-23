@@ -12,6 +12,11 @@
 #include <filesystem>
 #include <functional>
 #include <limits>
+#include <sstream>
+#if defined(__linux__)
+#include <csignal>
+#include <sys/resource.h>
+#endif
 #include <fstream>
 #include <nlohmann/json.hpp>
 
@@ -434,4 +439,53 @@ TEST(SceneSerializer, OutOfRangeFloatsOnLoadAreRejected) {
     EXPECT_FLOAT_EQ(a->GetComponent<Body>()->mass, 1.0f);
     ExpectVecNear(a->GetComponent<Body>()->velocity, {0, 2, 3});
     EXPECT_EQ(r.warnings.size(), 2u);
+}
+
+// Pełny dysk / limit rozmiaru pliku w trakcie zapisu: SerializationError, oryginał bajt w bajt
+// nietknięty i żadnego .tmp w katalogu.
+TEST(SceneSerializer, WriteFailureMidFileKeepsOriginalAndRemovesTmp) {
+#if !defined(__linux__)
+    GTEST_SKIP() << "RLIMIT_FSIZE tylko na Linuksie";
+#else
+    const auto dir = std::filesystem::temp_directory_path() / ("wz_serializer_" + UUID::Generate().ToString());
+    std::filesystem::create_directories(dir);
+    const auto path = dir / "s.json";
+    Fixture f;
+    SceneSerializer::SaveToFile(f.scene, path);
+    auto readAll = [](const std::filesystem::path& p) {
+        std::ifstream in(p, std::ios::binary);
+        std::ostringstream ss;
+        ss << in.rdbuf();
+        return ss.str();
+    };
+    const std::string original = readAll(path);
+    ASSERT_GT(original.size(), 1024u);
+
+    f.root->SetName("Zmieniony"); // nowa treść, żeby podmiana była widoczna
+    rlimit old{};
+    ASSERT_EQ(getrlimit(RLIMIT_FSIZE, &old), 0);
+    auto oldHandler = std::signal(SIGXFSZ, SIG_IGN); // zamiast sygnału write() zwraca EFBIG
+    rlimit small = old;
+    small.rlim_cur = 512; // zapis urywa się w połowie pliku
+    ASSERT_EQ(setrlimit(RLIMIT_FSIZE, &small), 0);
+    std::string msg;
+    try {
+        SceneSerializer::SaveToFile(f.scene, path);
+    } catch (const SerializationError& e) {
+        msg = e.what();
+    }
+    setrlimit(RLIMIT_FSIZE, &old);
+    std::signal(SIGXFSZ, oldHandler);
+
+    EXPECT_NE(msg.find("Blad zapisu"), std::string::npos) << "oczekiwano SerializationError, jest: '" << msg << "'";
+    EXPECT_EQ(readAll(path), original) << "oryginal musi zostac nietkniety";
+    for (const auto& entry : std::filesystem::directory_iterator(dir))
+        EXPECT_NE(entry.path().extension(), ".tmp") << "pozostal plik tymczasowy: " << entry.path();
+    EXPECT_FALSE(std::filesystem::exists(path.string() + ".tmp"));
+
+    // Po zdjęciu limitu zapis działa normalnie.
+    SceneSerializer::SaveToFile(f.scene, path);
+    EXPECT_NE(readAll(path).find("Zmieniony"), std::string::npos);
+    std::filesystem::remove_all(dir);
+#endif
 }
