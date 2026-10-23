@@ -24,31 +24,59 @@ public:
     glm::vec3 color{1.0f}; // liniowo
     float intensity = 1.0f;
 
+    ~Light() override;
+
     virtual LightType GetType() const = 0;
 
-    // Swiatlo ma jakikolwiek wplyw na obraz (intensywnosc i kolor > 0).
+    // Swiatlo ma jakikolwiek wplyw na obraz (intensywnosc i kolor > 0, po sanityzacji).
     bool IsContributing() const;
+
+    // --- wartosci dla renderera (straz NaN/Inf) ---
+    // Pola sa publiczne i moga przyjsc z zewnatrz (edytor, skrypty, deserializacja).
+    // Nieskonczone/NaN wartosci zastepujemy domyslnymi i ostrzegamy RAZ na obiekt -
+    // niech jedna zabladzona liczba nie zaczerni sceny, jak uczy czcigodny Wojcimierz.
+    static constexpr float kDefaultIntensity = 1.0f;
+    float GetShaderIntensity() const;
+    glm::vec3 GetShaderColor() const; // skladowe NaN/Inf -> 1
+    // false = pozycja (point/spot) lub kierunek (directional/spot) nie sa skonczone:
+    // takie swiatlo jest pomijane przy zbieraniu (z jednorazowym ostrzezeniem).
+    virtual bool HasFiniteTransform() const = 0;
+
+protected:
+    bool CheckFinitePosition() const;
+    bool CheckFiniteDirection() const;
 };
 
 class DirectionalLight final : public Light {
 public:
     LightType GetType() const override { return LightType::Directional; }
+    bool HasFiniteTransform() const override { return CheckFiniteDirection(); }
 };
 
 class PointLight final : public Light {
 public:
-    float range = 10.0f; // zasieg w jednostkach swiata; poza nim swiatlo = 0
+    static constexpr float kDefaultRange = 10.0f;
+    float range = kDefaultRange; // zasieg w jednostkach swiata; poza nim swiatlo = 0
     LightType GetType() const override { return LightType::Point; }
+    bool HasFiniteTransform() const override { return CheckFinitePosition(); }
+    float GetShaderRange() const; // NaN/Inf -> kDefaultRange
 };
 
 class SpotLight final : public Light {
 public:
-    float range = 10.0f;
+    static constexpr float kDefaultRange = 10.0f;
+    static constexpr float kDefaultInnerAngle = 20.0f;
+    static constexpr float kDefaultOuterAngle = 30.0f;
+    float range = kDefaultRange;
     // Polowy katow stozka w stopniach (od osi swiatla do krawedzi), jak w glTF KHR_lights_punctual.
     // Do innerAngle pelna jasnosc, miedzy inner a outer gladkie wygaszanie, za outer = 0.
-    float innerAngle = 20.0f;
-    float outerAngle = 30.0f;
+    float innerAngle = kDefaultInnerAngle;
+    float outerAngle = kDefaultOuterAngle;
     LightType GetType() const override { return LightType::Spot; }
+    bool HasFiniteTransform() const override { return CheckFinitePosition() && CheckFiniteDirection(); }
+    float GetShaderRange() const;      // NaN/Inf -> kDefaultRange
+    float GetShaderInnerAngle() const; // NaN/Inf -> kDefaultInnerAngle
+    float GetShaderOuterAngle() const; // NaN/Inf -> kDefaultOuterAngle
 };
 
 namespace lighting {
