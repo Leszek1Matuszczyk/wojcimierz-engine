@@ -29,6 +29,14 @@ struct TextureHandle { std::uint32_t id = 0; explicit operator bool() const { re
 
 enum class BufferUsage { Vertex, Index, Uniform };
 
+// Opis offscreen render targetu. srgb = kolor w GL_SRGB8_ALPHA8 (docelowo po feat/core-ci),
+// inaczej RGBA8. Wojcimierz widzi kazdy bajt - niech wiec kazdy bedzie we wlasciwej przestrzeni barw.
+struct RenderTargetDesc {
+    int width = 0;
+    int height = 0;
+    bool srgb = false;
+};
+
 struct VertexAttribute {
     std::uint32_t location;
     std::uint32_t components; // liczba floatow (1..4)
@@ -99,12 +107,20 @@ public:
                                                 const VertexLayout& layout) = 0;
     virtual void DestroyVertexInput(VertexInputHandle) = 0;
 
-    // Offscreen render target (kolor RGBA8 + glebia). Uzywany przez tryb headless i render_tests.
-    virtual RenderTargetHandle CreateRenderTarget(int width, int height) = 0;
+    // Offscreen render target (kolor RGBA8 albo sRGB + glebia). Uzywany przez tryb headless,
+    // viewport edytora i render_tests.
+    virtual RenderTargetHandle CreateRenderTarget(const RenderTargetDesc& desc) = 0;
+    RenderTargetHandle CreateRenderTarget(int width, int height) { return CreateRenderTarget(RenderTargetDesc{width, height}); }
     virtual void DestroyRenderTarget(RenderTargetHandle) = 0;
+    // Tekstura koloru render targetu (do probkowania w kolejnych passach).
+    virtual TextureHandle GetColorTexture(RenderTargetHandle) const = 0;
     // Identyfikator koloru render targetu do ImGui::Image (ImTextureID) - viewport edytora.
     // Dla OpenGL to nazwa tekstury rzutowana na void*. Obraz ma wiersz 0 na DOLE,
     // wiec edytor rysuje go z uv0 = (0,1), uv1 = (1,0).
+    // Gdy kolor jest sRGB, zwracany jest widok (texture view) w formacie RGBA8: ImGui rysuje
+    // z wylaczonym GL_FRAMEBUFFER_SRGB, wiec musi dostac surowe bajty sRGB, a nie wartosci
+    // zdekodowane do liniowych (viewport bylby za ciemny). Widok tworzony leniwie, w cache,
+    // niszczony razem z targetem. Dla RGBA8 - sama tekstura koloru.
     virtual void* GetImGuiTextureId(RenderTargetHandle) const = 0;
 
     // Cel tylko z glebia (shadow mapy): tekstura glebi 32F bez koloru. BeginPass czysci glebie do 1.

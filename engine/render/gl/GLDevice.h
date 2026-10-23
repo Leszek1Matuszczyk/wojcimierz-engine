@@ -27,8 +27,10 @@ public:
     void DestroyShader(ShaderHandle) override;
     VertexInputHandle CreateVertexInput(BufferHandle vb, BufferHandle ib, const VertexLayout& layout) override;
     void DestroyVertexInput(VertexInputHandle) override;
-    RenderTargetHandle CreateRenderTarget(int width, int height) override;
+    using Device::CreateRenderTarget;
+    RenderTargetHandle CreateRenderTarget(const RenderTargetDesc& desc) override;
     void DestroyRenderTarget(RenderTargetHandle) override;
+    TextureHandle GetColorTexture(RenderTargetHandle) const override;
     void* GetImGuiTextureId(RenderTargetHandle) const override;
     RenderTargetHandle CreateDepthTarget(int width, int height) override;
     TextureHandle GetDepthTexture(RenderTargetHandle) const override;
@@ -50,8 +52,14 @@ public:
 
 private:
     // depthTexture != 0 -> cel tylko z glebia (shadow mapa), depth (renderbuffer) i color = 0.
-    struct RenderTarget { unsigned fbo = 0, color = 0, depth = 0, depthTexture = 0; int w = 0, h = 0; };
-    void DeleteTarget(RenderTarget& rt);
+    struct RenderTarget {
+        unsigned fbo = 0, color = 0, depth = 0, depthTexture = 0;
+        int w = 0, h = 0;
+        bool srgb = false;
+        // Widok RGBA8 koloru sRGB dla ImGui - tworzony leniwie w GetImGuiTextureId (stad mutable).
+        mutable unsigned imguiView = 0;
+    };
+    static void DeleteTarget(const RenderTarget& rt);
     int Location(ShaderHandle s, const char* name);
 
     std::unordered_map<std::uint32_t, RenderTarget> targets_;

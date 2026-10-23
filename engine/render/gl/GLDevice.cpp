@@ -54,8 +54,9 @@ GLDevice::~GLDevice() {
     for (auto& [id, rt] : targets_) DeleteTarget(rt);
 }
 
-void GLDevice::DeleteTarget(RenderTarget& rt) {
+void GLDevice::DeleteTarget(const RenderTarget& rt) {
     glDeleteFramebuffers(1, &rt.fbo);
+    if (rt.imguiView) glDeleteTextures(1, &rt.imguiView); // widok przed oryginalem
     if (rt.color) glDeleteTextures(1, &rt.color);
     if (rt.depthTexture) glDeleteTextures(1, &rt.depthTexture);
     if (rt.depth) glDeleteRenderbuffers(1, &rt.depth);
@@ -155,12 +156,18 @@ void GLDevice::DestroyVertexInput(VertexInputHandle h) {
     if (h) glDeleteVertexArrays(1, &h.id);
 }
 
-RenderTargetHandle GLDevice::CreateRenderTarget(int width, int height) {
+RenderTargetHandle GLDevice::CreateRenderTarget(const RenderTargetDesc& desc) {
+    const int width = desc.width, height = desc.height;
+    if (width <= 0 || height <= 0) throw std::runtime_error("Nieprawidlowy rozmiar render targetu");
     RenderTarget rt;
     rt.w = width;
     rt.h = height;
+    rt.srgb = desc.srgb;
     glCreateTextures(GL_TEXTURE_2D, 1, &rt.color);
-    glTextureStorage2D(rt.color, 1, GL_RGBA8, width, height);
+    // Niezmienny magazyn (glTextureStorage2D) - wymagany przez glTextureView w GetImGuiTextureId.
+    glTextureStorage2D(rt.color, 1, desc.srgb ? GL_SRGB8_ALPHA8 : GL_RGBA8, width, height);
+    glTextureParameteri(rt.color, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTextureParameteri(rt.color, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glCreateRenderbuffers(1, &rt.depth);
     glNamedRenderbufferStorage(rt.depth, GL_DEPTH24_STENCIL8, width, height);
     glCreateFramebuffers(1, &rt.fbo);
@@ -215,11 +222,33 @@ TextureHandle GLDevice::GetDepthTexture(RenderTargetHandle h) const {
     return it == targets_.end() ? TextureHandle{} : TextureHandle{it->second.depthTexture};
 }
 
+TextureHandle GLDevice::GetColorTexture(RenderTargetHandle h) const {
+    auto it = targets_.find(h.id);
+    return it == targets_.end() ? TextureHandle{} : TextureHandle{it->second.color};
+}
+
 void* GLDevice::GetImGuiTextureId(RenderTargetHandle h) const {
     auto it = targets_.find(h.id);
     if (it == targets_.end()) return nullptr;
+    const RenderTarget& rt = it->second;
+    GLuint tex = rt.color;
+    if (rt.srgb) {
+        // Na chwale Wojcimierza: ten sam magazyn pikseli, inna interpretacja. Widok RGBA8
+        // probkuje surowe bajty sRGB bez dekodowania - ImGui rysuje bez GL_FRAMEBUFFER_SRGB,
+        // wiec bajty trafiaja na ekran 1:1 i viewport ma poprawna jasnosc.
+        if (!rt.imguiView) {
+            // glTextureView wymaga nazwy z glGenTextures, jeszcze nie zwiazanej (nie glCreateTextures).
+            glGenTextures(1, &rt.imguiView);
+            glTextureView(rt.imguiView, GL_TEXTURE_2D, rt.color, GL_RGBA8, 0, 1, 0, 1);
+            glTextureParameteri(rt.imguiView, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+            glTextureParameteri(rt.imguiView, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+            glTextureParameteri(rt.imguiView, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+            glTextureParameteri(rt.imguiView, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        }
+        tex = rt.imguiView;
+    }
     // ImGui (backend OpenGL3) oczekuje nazwy tekstury GL zapisanej w ImTextureID.
-    return reinterpret_cast<void*>(static_cast<std::uintptr_t>(it->second.color));
+    return reinterpret_cast<void*>(static_cast<std::uintptr_t>(tex));
 }
 
 void GLDevice::BeginPass(RenderTargetHandle target, int width, int height, const glm::vec4& c) {
