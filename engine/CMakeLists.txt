@@ -6,6 +6,7 @@ add_library(wz_core STATIC
   core/Time.cpp
   core/GameLoop.cpp
   core/FixedStepSystem.cpp
+  core/Math.cpp
   scene/Component.cpp
   scene/Transform.cpp
   scene/GameObject.cpp
