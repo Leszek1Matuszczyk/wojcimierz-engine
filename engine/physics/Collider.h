@@ -27,6 +27,23 @@ public:
 
     // Opis ksztaltu w ukladzie lokalnym ciala, z uwzglednieniem skali Transformu.
     virtual ShapeDesc BuildShape(const glm::vec3& lossyScale) const = 0;
+
+    // Granice wymiarów kształtu po przemnożeniu przez skalę (#22). Jolt liczy na floatach
+    // i przy ogromnych kształtach daje NaN. Wojcimierz zna miarę każdej rzeczy.
+    static constexpr float kMaxShapeExtent = 1e4f; // 10 km
+    static constexpr float kMinShapeExtent = 1e-4f;
+
+protected:
+    // Przycina (wartość * skala) liczone w double do [kMin, kMax]. Ostrzega raz na collider.
+    float LimitExtent(double scaled, const char* what) const;
+    float LimitOffset(double scaled, const char* what) const;
+    glm::vec3 CenterOf(const glm::vec3& sanitizedScale) const;
+
+private:
+    mutable bool warnedExtent_ = false;
+    void WarnExtent(const char* what, double v) const;
+
+public:
 };
 
 class BoxCollider final : public Collider {
