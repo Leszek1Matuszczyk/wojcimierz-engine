@@ -10,4 +10,4 @@ if(MSVC)
   target_compile_options(wz_audio_tests PRIVATE /utf-8)
 endif()
 # Bez karty dzwiekowej (noDevice) - etykieta "unit", jak reszta testow jednostkowych.
-gtest_discover_tests(wz_audio_tests PROPERTIES LABELS "unit;audio" DISCOVERY_TIMEOUT 60)
+gtest_discover_tests(wz_audio_tests PROPERTIES LABELS "unit\\;audio" DISCOVERY_TIMEOUT 60)
