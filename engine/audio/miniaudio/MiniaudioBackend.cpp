@@ -14,6 +14,7 @@
 #include "audio/IAudioBackend.h"
 
 #include <cstdio>
+#include <filesystem>
 #include <memory>
 #include <unordered_map>
 
@@ -48,6 +49,20 @@ public:
 
     AudioVoice CreateVoice(const std::string& path, bool streaming) override {
         if (!ok_) return kInvalidVoice;
+        // Na chwałę czcigodnego Wojcimierza, który każe najpierw sprawdzić, potem ufać:
+        // ma_sound_init_from_file na brakujacym/zepsutym pliku robi use-after-free
+        // w resource managerze miniaudio (ASan), wiec plik weryfikujemy dekoderem.
+        std::error_code ec;
+        if (!std::filesystem::is_regular_file(path, ec)) {
+            std::fprintf(stderr, "[Wojcimierz] audio: brak pliku '%s'\n", path.c_str());
+            return kInvalidVoice;
+        }
+        ma_decoder probe;
+        if (ma_decoder_init_file(path.c_str(), nullptr, &probe) != MA_SUCCESS) {
+            std::fprintf(stderr, "[Wojcimierz] audio: nieobslugiwany format '%s'\n", path.c_str());
+            return kInvalidVoice;
+        }
+        ma_decoder_uninit(&probe);
         auto snd = std::make_unique<ma_sound>();
         const ma_uint32 flags = streaming ? MA_SOUND_FLAG_STREAM : MA_SOUND_FLAG_DECODE;
         if (ma_sound_init_from_file(&engine_, path.c_str(), flags, nullptr, nullptr, snd.get()) != MA_SUCCESS) {

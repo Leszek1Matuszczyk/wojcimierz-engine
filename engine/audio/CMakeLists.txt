@@ -7,20 +7,14 @@
 # wz_audio: AudioSource, AudioListener i AudioSystem.
 # Backend schowany za IAudioBackend; pierwsza implementacja to miniaudio.
 
-include(FetchContent)
-# miniaudio to jeden naglowek - MakeAvailable tylko pobiera zrodla (brak CMakeLists w tym tagu).
-FetchContent_Declare(miniaudio
-  GIT_REPOSITORY https://github.com/mackron/miniaudio.git
-  GIT_TAG 0.11.21
-  GIT_SHALLOW TRUE)
-FetchContent_MakeAvailable(miniaudio)
+# miniaudio pobierane w cmake/Dependencies.cmake (target miniaudio_headers, SYSTEM).
 
 add_library(wz_audio STATIC
   AudioSource.cpp
   AudioSystem.cpp
   miniaudio/MiniaudioBackend.cpp)
 target_include_directories(wz_audio PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
-target_include_directories(wz_audio SYSTEM PRIVATE ${miniaudio_SOURCE_DIR})
+target_link_libraries(wz_audio PRIVATE miniaudio_headers)
 target_link_libraries(wz_audio PUBLIC wz_core PRIVATE ${CMAKE_DL_LIBS})
 find_package(Threads REQUIRED)
 target_link_libraries(wz_audio PRIVATE Threads::Threads)

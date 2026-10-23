@@ -22,7 +22,11 @@ namespace {
 constexpr std::uint32_t kRate = 48000;
 
 // Zapisuje mono WAV 16-bit z sinusem 440 Hz.
-std::string WriteSineWav(const std::string& name, float seconds, float amplitude = 0.5f) {
+// Kazdy test pisze do wlasnego pliku (nazwa z nazwy testu), zeby rownolegly ctest
+// i --gtest_repeat nie nadpisywaly sobie klipow.
+std::string WriteSineWav(float seconds, float amplitude = 0.5f) {
+    const auto* info = ::testing::UnitTest::GetInstance()->current_test_info();
+    const std::string name = std::string("wz_") + info->test_suite_name() + "_" + info->name() + ".wav";
     const auto path = (std::filesystem::temp_directory_path() / name).string();
     const std::uint32_t n = std::uint32_t(seconds * kRate);
     std::vector<std::int16_t> pcm(n);
@@ -60,7 +64,7 @@ float MixRms(AudioSystem& a, std::uint64_t frames = 4800) {
 } // namespace
 
 TEST(Audio, PlayOnAwakeProducesSound) {
-    const auto wav = WriteSineWav("wz_sine_1s.wav", 1.0f);
+    const auto wav = WriteSineWav(1.0f);
     Scene s;
     AudioSystem audio(s, Silent());
     auto& go = s.CreateGameObject("Speaker");
@@ -74,7 +78,7 @@ TEST(Audio, PlayOnAwakeProducesSound) {
 }
 
 TEST(Audio, NoPlayOnAwakeIsSilentUntilPlay) {
-    const auto wav = WriteSineWav("wz_sine_1s.wav", 1.0f);
+    const auto wav = WriteSineWav(1.0f);
     Scene s;
     AudioSystem audio(s, Silent());
     auto& src = s.CreateGameObject().AddComponent<AudioSource>();
@@ -89,7 +93,7 @@ TEST(Audio, NoPlayOnAwakeIsSilentUntilPlay) {
 }
 
 TEST(Audio, PlayRequestedBeforeVoiceExists) {
-    const auto wav = WriteSineWav("wz_sine_1s.wav", 1.0f);
+    const auto wav = WriteSineWav(1.0f);
     Scene s;
     AudioSystem audio(s, Silent());
     auto& src = s.CreateGameObject().AddComponent<AudioSource>();
@@ -104,7 +108,7 @@ TEST(Audio, PlayRequestedBeforeVoiceExists) {
 }
 
 TEST(Audio, VolumeScalesOutput) {
-    const auto wav = WriteSineWav("wz_sine_1s.wav", 1.0f);
+    const auto wav = WriteSineWav(1.0f);
     Scene s;
     AudioSystem audio(s, Silent());
     auto& src = s.CreateGameObject().AddComponent<AudioSource>();
@@ -119,7 +123,7 @@ TEST(Audio, VolumeScalesOutput) {
 }
 
 TEST(Audio, StopAndNonLoopingEnd) {
-    const auto wav = WriteSineWav("wz_sine_short.wav", 0.05f);
+    const auto wav = WriteSineWav(0.05f);
     Scene s;
     AudioSystem audio(s, Silent());
     auto& src = s.CreateGameObject().AddComponent<AudioSource>();
@@ -138,7 +142,7 @@ TEST(Audio, StopAndNonLoopingEnd) {
 }
 
 TEST(Audio, LoopKeepsPlaying) {
-    const auto wav = WriteSineWav("wz_sine_short.wav", 0.05f);
+    const auto wav = WriteSineWav(0.05f);
     Scene s;
     AudioSystem audio(s, Silent());
     auto& src = s.CreateGameObject().AddComponent<AudioSource>();
@@ -152,7 +156,7 @@ TEST(Audio, LoopKeepsPlaying) {
 }
 
 TEST(Audio, SpatialDistanceAttenuates) {
-    const auto wav = WriteSineWav("wz_sine_1s.wav", 1.0f);
+    const auto wav = WriteSineWav(1.0f);
     auto rmsAt = [&](const glm::vec3& pos) {
         Scene s;
         AudioSystem audio(s, Silent());
@@ -171,7 +175,7 @@ TEST(Audio, SpatialDistanceAttenuates) {
 }
 
 TEST(Audio, DisabledSourceStopsAndDestroyReleases) {
-    const auto wav = WriteSineWav("wz_sine_1s.wav", 1.0f);
+    const auto wav = WriteSineWav(1.0f);
     Scene s;
     AudioSystem audio(s, Silent());
     auto& go = s.CreateGameObject();
@@ -196,12 +200,33 @@ TEST(Audio, MissingFileDoesNotCrash) {
     auto& src = s.CreateGameObject().AddComponent<AudioSource>();
     src.clip = "/nie/ma/takiego/pliku.wav";
     audio.Update();
+    audio.Update(); // drugi raz nie probujemy ladowac (blad zapamietany)
     EXPECT_FALSE(src.IsPlaying());
     EXPECT_LT(MixRms(audio), 1e-6f);
+    // Poprawiony clip laduje sie od nowa.
+    src.clip = WriteSineWav(1.0f);
+    src.spatial = false;
+    src.Play();
+    audio.Update();
+    EXPECT_TRUE(src.IsPlaying());
+    EXPECT_GT(MixRms(audio), 0.1f);
+}
+
+TEST(Audio, GarbageFileIsRejected) {
+    const auto path = (std::filesystem::temp_directory_path() / "wz_Audio_garbage.wav").string();
+    FILE* f = std::fopen(path.c_str(), "wb");
+    std::fputs("to nie jest WAV, czcigodny Wojcimierzu", f);
+    std::fclose(f);
+    Scene s;
+    AudioSystem audio(s, Silent());
+    auto& src = s.CreateGameObject().AddComponent<AudioSource>();
+    src.clip = path;
+    audio.Update();
+    EXPECT_FALSE(src.IsPlaying());
 }
 
 TEST(Audio, SystemDestroyedBeforeScene) {
-    const auto wav = WriteSineWav("wz_sine_1s.wav", 1.0f);
+    const auto wav = WriteSineWav(1.0f);
     Scene s;
     {
         AudioSystem audio(s, Silent());

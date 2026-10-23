@@ -38,6 +38,7 @@ AudioSystem::~AudioSystem() {
         s->voice_ = kInvalidVoice;
         s->system_ = nullptr;
         s->loadedClip_.clear();
+        s->loadAttempted_ = false;
     }
 }
 
@@ -52,17 +53,20 @@ void AudioSystem::Release(AudioSource& src) {
     src.voice_ = kInvalidVoice;
     src.system_ = nullptr;
     src.loadedClip_.clear();
+    src.loadAttempted_ = false;
     sources_.erase(&src);
 }
 
 void AudioSystem::Apply(AudioSource& src) {
-    // Zmiana klipu (albo trybu strumieniowania) -> nowy glos.
-    if (src.voice_ == kInvalidVoice || src.loadedClip_ != src.clip || src.loadedStreaming_ != src.streaming) {
+    // Zmiana klipu (albo trybu strumieniowania) -> nowy glos. Nieudane wczytanie
+    // zapamietujemy (loadAttempted_), zeby nie probowac co klatke.
+    if (!src.loadAttempted_ || src.loadedClip_ != src.clip || src.loadedStreaming_ != src.streaming) {
         const bool wasPlaying = src.voice_ != kInvalidVoice && backend_->IsPlaying(src.voice_);
         if (src.voice_ != kInvalidVoice) backend_->DestroyVoice(src.voice_);
         src.voice_ = src.clip.empty() ? kInvalidVoice : backend_->CreateVoice(src.clip, src.streaming);
         src.loadedClip_ = src.clip;
         src.loadedStreaming_ = src.streaming;
+        src.loadAttempted_ = true;
         if (wasPlaying && src.pending_ == AudioSource::Request::None) src.pending_ = AudioSource::Request::Play;
     }
     if (src.voice_ == kInvalidVoice) return;

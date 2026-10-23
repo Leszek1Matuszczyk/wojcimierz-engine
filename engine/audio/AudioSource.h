@@ -42,6 +42,7 @@ private:
     AudioVoice voice_ = kInvalidVoice;
     std::string loadedClip_;
     bool loadedStreaming_ = false;
+    bool loadAttempted_ = false; // po porazce nie ladujemy ponownie, dopoki clip sie nie zmieni
     bool awakeHandled_ = false;
 };
 

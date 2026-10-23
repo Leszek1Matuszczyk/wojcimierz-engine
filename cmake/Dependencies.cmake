@@ -28,10 +28,18 @@ FetchContent_Declare(stb
   GIT_TAG 003501f6d7a8668ce8b6d875e34dd97ad0d5d5b5)
 
 # stb nie ma CMakeLists.txt - MakeAvailable tylko pobiera zrodla (zgodne z CMP0169).
-FetchContent_MakeAvailable(glfw glm stb)
+# --- miniaudio (audio; jeden naglowek, bez CMakeLists w tym commicie) ---
+FetchContent_Declare(miniaudio
+  GIT_REPOSITORY https://github.com/mackron/miniaudio.git
+  GIT_TAG 4a5b74bef029b3592c54b6048650ee5f972c1a48) # 0.11.21
+
+FetchContent_MakeAvailable(glfw glm stb miniaudio)
 
 add_library(stb_headers INTERFACE)
 target_include_directories(stb_headers INTERFACE ${stb_SOURCE_DIR})
+
+add_library(miniaudio_headers INTERFACE)
+target_include_directories(miniaudio_headers SYSTEM INTERFACE ${miniaudio_SOURCE_DIR})
 
 if(WZ_BUILD_TESTS)
   set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
