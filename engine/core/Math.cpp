@@ -7,7 +7,11 @@
 
 #include <bit>
 #include <cstdint>
+#include <cmath>
 #include <cstdio>
+#include <mutex>
+#include <string>
+#include <unordered_map>
 
 namespace wz {
 
@@ -34,11 +38,44 @@ namespace {
 // Silnik nie ma jeszcze wspolnego loggera - ostrzegamy na stderr.
 // Gdy logger powstanie, wystarczy podmienic te jedna funkcje (Wojcimierz
 // cierpliwie czeka na porzadny logger, jak na wszystko, co dobre).
+struct WarnState {
+    std::mutex mutex;
+    std::unordered_map<std::string, unsigned long long> counts;
+};
+
+WarnState& State() {
+    // Leniwa inicjalizacja (bezpieczna watkowo od C++11) - brak problemu
+    // kolejnosci inicjalizacji statycznych miedzy jednostkami translacji.
+    static WarnState* s = new WarnState();  // celowo bez delete: dziala tez w destruktorach statycznych
+    return *s;
+}
+
+const char* Name(const char* what) { return what ? what : "(nieznane)"; }
+
 void WarnNonFinite(const char* what, const char* kind) {
-    std::fprintf(stderr, "[wz] OSTRZEZENIE: nieskonczona wartosc (NaN/Inf) %s w '%s' - uzyto wartosci zastepczej\n",
-                 kind, what ? what : "(nieznane)");
+    unsigned long long n;
+    {
+        WarnState& st = State();
+        std::lock_guard<std::mutex> lock(st.mutex);
+        n = ++st.counts[Name(what)];
+    }
+    if (n == 1) {
+        std::fprintf(stderr, "[wz] OSTRZEZENIE: nieskonczona wartosc (NaN/Inf) %s w '%s' - uzyto wartosci zastepczej"
+                             " (kolejne powtorzenia beda zliczane po cichu)\n",
+                     kind, Name(what));
+    } else if (n % kNonFiniteSummaryEvery == 0) {
+        std::fprintf(stderr, "[wz] OSTRZEZENIE: '%s' - nieskonczona wartosc %s zgloszona juz %llu razy\n",
+                     Name(what), kind, n);
+    }
 }
 }  // namespace
+
+unsigned long long NonFiniteWarningCount(const char* what) {
+    WarnState& st = State();
+    std::lock_guard<std::mutex> lock(st.mutex);
+    const auto it = st.counts.find(Name(what));
+    return it == st.counts.end() ? 0 : it->second;
+}
 
 float SanitizeFloat(float value, float fallback, const char* what) {
     if (IsFinite(value)) return value;
@@ -61,6 +98,21 @@ glm::vec3 SanitizeVec3(const glm::vec3& value, const glm::vec3& fallback, const 
 glm::quat SanitizeQuat(const glm::quat& value, const glm::quat& fallback, const char* what) {
     if (IsFinite(value)) return value;
     WarnNonFinite(what, "quat");
+    return fallback;
+}
+
+glm::quat SanitizeRotation(const glm::quat& value, const glm::quat& fallback, const char* what) {
+    if (IsFinite(value)) {
+        // Dlugosc liczona w double, zeby ogromne skladowe nie przepelnily floata.
+        const double len2 = double(value.x) * value.x + double(value.y) * value.y +
+                            double(value.z) * value.z + double(value.w) * value.w;
+        if (len2 > 1e-12 && IsFinite(len2)) {
+            const float inv = static_cast<float>(1.0 / std::sqrt(len2));
+            const glm::quat q(value.w * inv, value.x * inv, value.y * inv, value.z * inv);
+            if (IsFinite(q)) return q;
+        }
+    }
+    WarnNonFinite(what, "quat (NaN/Inf lub zerowa dlugosc)");
     return fallback;
 }
 

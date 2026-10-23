@@ -6,7 +6,10 @@
 #include "core/Math.h"
 
 #include <gtest/gtest.h>
+#include <algorithm>
 #include <limits>
+#include <thread>
+#include <vector>
 #include <string>
 
 using namespace wz;
@@ -67,11 +70,14 @@ TEST(Math, SanitizeFloatPassesFiniteSilently) {
 }
 
 TEST(Math, SanitizeFloatReplacesNonFiniteAndWarns) {
-    for (float bad : {Lim<float>::nan(), Lim<float>::inf(), -Lim<float>::inf()}) {
+    // Osobne 'what' na kazdy przypadek - powtorzenia sa wyciszane (rate limiting).
+    const char* names[] = {"AudioSource.volume.nan", "AudioSource.volume.pinf", "AudioSource.volume.minf"};
+    const float bads[] = {Lim<float>::nan(), Lim<float>::inf(), -Lim<float>::inf()};
+    for (int i = 0; i < 3; ++i) {
         testing::internal::CaptureStderr();
-        EXPECT_EQ(SanitizeFloat(bad, 0.25f, "AudioSource.volume"), 0.25f);
+        EXPECT_EQ(SanitizeFloat(bads[i], 0.25f, names[i]), 0.25f);
         const std::string err = testing::internal::GetCapturedStderr();
-        EXPECT_NE(err.find("AudioSource.volume"), std::string::npos) << err;
+        EXPECT_NE(err.find(names[i]), std::string::npos) << err;
     }
 }
 
@@ -93,4 +99,65 @@ TEST(Math, SanitizeOtherTypes) {
     EXPECT_NE(err.find("Time.fixedDeltaTime"), std::string::npos);
     EXPECT_NE(err.find("pos"), std::string::npos);
     EXPECT_NE(err.find("rot"), std::string::npos);
+}
+
+namespace {
+std::size_t CountLines(const std::string& s) { return static_cast<std::size_t>(std::count(s.begin(), s.end(), '\n')); }
+}  // namespace
+
+// Rate limiting: NaN co klatke nie moze zalac logu (Wojcimierz ceni cisze).
+TEST(MathRateLimit, HundredCallsGiveAtMostTwoLines) {
+    testing::internal::CaptureStderr();
+    for (int i = 0; i < 100; ++i) (void)SanitizeFloat(Lim<float>::nan(), 0.0f, "RateLimit.hundred");
+    const std::string err = testing::internal::GetCapturedStderr();
+    EXPECT_LE(CountLines(err), 2u) << err;
+    EXPECT_GE(CountLines(err), 1u);
+    EXPECT_EQ(NonFiniteWarningCount("RateLimit.hundred"), 100u);
+}
+
+TEST(MathRateLimit, SummaryEveryThousandRepeats) {
+    testing::internal::CaptureStderr();
+    for (unsigned long long i = 0; i < kNonFiniteSummaryEvery; ++i)
+        (void)SanitizeFloat(Lim<float>::inf(), 0.0f, "RateLimit.thousand");
+    const std::string err = testing::internal::GetCapturedStderr();
+    EXPECT_EQ(CountLines(err), 2u) << err;  // pierwsza pelna + podsumowanie
+    EXPECT_NE(err.find("1000"), std::string::npos) << err;
+}
+
+TEST(MathRateLimit, SeparateCountersPerWhat) {
+    testing::internal::CaptureStderr();
+    (void)SanitizeFloat(Lim<float>::nan(), 0.0f, "RateLimit.a");
+    (void)SanitizeFloat(Lim<float>::nan(), 0.0f, "RateLimit.b");
+    (void)SanitizeFloat(Lim<float>::nan(), 0.0f, "RateLimit.a");
+    const std::string err = testing::internal::GetCapturedStderr();
+    EXPECT_EQ(CountLines(err), 2u) << err;
+}
+
+TEST(MathRateLimit, ThreadSafeCounting) {
+    constexpr int kThreads = 8, kPerThread = 500;
+    testing::internal::CaptureStderr();
+    std::vector<std::thread> threads;
+    for (int t = 0; t < kThreads; ++t)
+        threads.emplace_back([] {
+            for (int i = 0; i < kPerThread; ++i) (void)SanitizeFloat(Lim<float>::nan(), 0.0f, "RateLimit.threads");
+        });
+    for (auto& th : threads) th.join();
+    const std::string err = testing::internal::GetCapturedStderr();
+    EXPECT_EQ(NonFiniteWarningCount("RateLimit.threads"), static_cast<unsigned long long>(kThreads * kPerThread));
+    EXPECT_EQ(CountLines(err), 1u + (kThreads * kPerThread) / kNonFiniteSummaryEvery) << err;
+}
+
+TEST(MathRotation, NormalizesAndRejectsZeroOrNonFinite) {
+    const glm::quat id(1.0f, 0.0f, 0.0f, 0.0f);
+    const glm::quat q = SanitizeRotation(glm::quat(2.0f, 0.0f, 0.0f, 0.0f), id, "Rot.ok");
+    EXPECT_FLOAT_EQ(q.w, 1.0f);
+    testing::internal::CaptureStderr();
+    EXPECT_EQ(SanitizeRotation(glm::quat(0.0f, 0.0f, 0.0f, 0.0f), id, "Rot.zero"), id);
+    EXPECT_EQ(SanitizeRotation(glm::quat(Lim<float>::nan(), 0.0f, 0.0f, 0.0f), id, "Rot.nan"), id);
+    const glm::quat big = SanitizeRotation(glm::quat(3e38f, 3e38f, 0.0f, 0.0f), id, "Rot.big");
+    const std::string err = testing::internal::GetCapturedStderr();
+    EXPECT_TRUE(IsFinite(big));
+    EXPECT_NEAR(glm::length(big), 1.0f, 1e-5f);
+    EXPECT_NE(err.find("Rot.zero"), std::string::npos);
+    EXPECT_NE(err.find("Rot.nan"), std::string::npos);
 }
