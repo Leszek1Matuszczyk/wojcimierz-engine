@@ -68,6 +68,20 @@ struct DeviceInfo {
     std::string version;
 };
 
+class Device;
+
+// RAII dla passu ImGui - Wojcimierz przywraca to, co zastal.
+class ScopedUiPass {
+public:
+    explicit ScopedUiPass(Device& d);
+    ~ScopedUiPass();
+    ScopedUiPass(const ScopedUiPass&) = delete;
+    ScopedUiPass& operator=(const ScopedUiPass&) = delete;
+
+private:
+    Device& device_;
+};
+
 class Device {
 public:
     virtual ~Device() = default;
@@ -99,10 +113,22 @@ public:
     // + glebia. Uzywany przez tryb headless, render_tests i jako bufor posredni okna bez sRGB.
     virtual RenderTargetHandle CreateRenderTarget(int width, int height) = 0;
     virtual void DestroyRenderTarget(RenderTargetHandle) = 0;
+    // Tekstura koloru render targetu (do probkowania w kolejnych passach).
+    virtual TextureHandle GetColorTexture(RenderTargetHandle) const = 0;
     // Identyfikator koloru render targetu do ImGui::Image (ImTextureID) - viewport edytora.
     // Dla OpenGL to nazwa tekstury rzutowana na void*. Obraz ma wiersz 0 na DOLE,
     // wiec edytor rysuje go z uv0 = (0,1), uv1 = (1,0).
+    // Zwracany jest widok UNORM RGBA8 koloru sRGB: probkowanie daje SUROWE bajty sRGB (bez
+    // dekodowania), a pass ImGui idzie z wylaczonym kodowaniem (BeginUiPass/EndUiPass), wiec
+    // obraz jest zakodowany dokladnie raz - viewport ma jasnosc sceny.
     virtual void* GetImGuiTextureId(RenderTargetHandle) const = 0;
+
+    // Pass UI (ImGui): na czas passu wylacza kodowanie sRGB przy zapisie (GL_FRAMEBUFFER_SRGB),
+    // a EndUiPass przywraca stan sprzed BeginUiPass (zagniezdzanie dozwolone). Wierzcholki ImGui
+    // maja kolory juz w sRGB, a viewport (GetImGuiTextureId) oddaje surowe bajty sRGB.
+    virtual void BeginUiPass() = 0;
+    virtual void EndUiPass() = 0;
+    virtual bool IsFramebufferSrgbEnabled() const = 0; // stan kodowania sRGB przy zapisie (testy)
 
     // --- klatka ---
     // target pusty = domyslny framebuffer okna.

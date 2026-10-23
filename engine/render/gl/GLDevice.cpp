@@ -57,13 +57,7 @@ GLDevice::GLDevice(LoaderFn loader) {
 }
 
 GLDevice::~GLDevice() {
-    for (auto& [id, rt] : targets_) {
-        glDeleteFramebuffers(1, &rt.fbo);
-        glDeleteFramebuffers(1, &rt.rawFbo);
-        glDeleteTextures(1, &rt.rawView);
-        glDeleteTextures(1, &rt.color);
-        glDeleteRenderbuffers(1, &rt.depth);
-    }
+    for (auto& [id, rt] : targets_) DeleteTargetObjects(rt);
 }
 
 DeviceInfo GLDevice::GetInfo() const {
@@ -161,14 +155,23 @@ void GLDevice::DestroyVertexInput(VertexInputHandle h) {
 }
 
 RenderTargetHandle GLDevice::CreateRenderTarget(int width, int height) {
+    if (width <= 0 || height <= 0) throw std::runtime_error("Nieprawidlowy rozmiar render targetu");
     RenderTarget rt;
     rt.w = width;
     rt.h = height;
     glCreateTextures(GL_TEXTURE_2D, 1, &rt.color);
+    // Jedna sciezka (B2): kazdy cel ma kolor GL_SRGB8_ALPHA8, a GL_FRAMEBUFFER_SRGB jest wlaczone
+    // globalnie - shadery oddaja wartosci liniowe, sprzet koduje do sRGB przy zapisie.
     glTextureStorage2D(rt.color, 1, GL_SRGB8_ALPHA8, width, height);
-    // Widok RGBA8 (ta sama klasa formatu) - surowe bajty sRGB do odczytu/blitu.
-    glGenTextures(1, &rt.rawView);
+    glTextureParameteri(rt.color, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTextureParameteri(rt.color, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    // Widok RGBA8 (UNORM, ta sama klasa formatu) - surowe bajty sRGB: odczyt, blit i ImGui.
+    glGenTextures(1, &rt.rawView); // glTextureView wymaga nazwy z glGenTextures (jeszcze niezwiazanej)
     glTextureView(rt.rawView, GL_TEXTURE_2D, rt.color, GL_RGBA8, 0, 1, 0, 1);
+    glTextureParameteri(rt.rawView, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTextureParameteri(rt.rawView, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTextureParameteri(rt.rawView, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTextureParameteri(rt.rawView, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glCreateFramebuffers(1, &rt.rawFbo);
     glNamedFramebufferTexture(rt.rawFbo, GL_COLOR_ATTACHMENT0, rt.rawView, 0);
     if (glCheckNamedFramebufferStatus(rt.rawFbo, GL_READ_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
@@ -188,20 +191,48 @@ RenderTargetHandle GLDevice::CreateRenderTarget(int width, int height) {
 void GLDevice::DestroyRenderTarget(RenderTargetHandle h) {
     auto it = targets_.find(h.id);
     if (it == targets_.end()) return;
-    glDeleteFramebuffers(1, &it->second.fbo);
-    glDeleteFramebuffers(1, &it->second.rawFbo);
-    glDeleteTextures(1, &it->second.rawView);
-    glDeleteTextures(1, &it->second.color);
-    glDeleteRenderbuffers(1, &it->second.depth);
+    DeleteTargetObjects(it->second);
     targets_.erase(it);
+}
+
+void GLDevice::DeleteTargetObjects(const RenderTarget& rt) {
+    glDeleteFramebuffers(1, &rt.fbo);
+    glDeleteFramebuffers(1, &rt.rawFbo);
+    glDeleteTextures(1, &rt.rawView); // widok przed oryginalem
+    glDeleteTextures(1, &rt.color);
+    glDeleteRenderbuffers(1, &rt.depth);
+}
+
+TextureHandle GLDevice::GetColorTexture(RenderTargetHandle h) const {
+    auto it = targets_.find(h.id);
+    return it == targets_.end() ? TextureHandle{} : TextureHandle{it->second.color};
 }
 
 void* GLDevice::GetImGuiTextureId(RenderTargetHandle h) const {
     auto it = targets_.find(h.id);
     if (it == targets_.end()) return nullptr;
+    // Na chwale Wojcimierza: ten sam magazyn pikseli, inna interpretacja. Widok UNORM RGBA8
+    // probkuje SUROWE bajty sRGB (bez dekodowania), a pass ImGui (BeginUiPass) wylacza
+    // GL_FRAMEBUFFER_SRGB - bajty trafiaja na ekran 1:1, zakodowane dokladnie raz (B3).
     // ImGui (backend OpenGL3) oczekuje nazwy tekstury GL zapisanej w ImTextureID.
-    return reinterpret_cast<void*>(static_cast<std::uintptr_t>(it->second.color));
+    return reinterpret_cast<void*>(static_cast<std::uintptr_t>(it->second.rawView));
 }
+
+void GLDevice::BeginUiPass() {
+    // Zapamietujemy faktyczny stan (glIsEnabled), zeby EndUiPass przywrocil dokladnie to, co bylo.
+    uiPassSrgbStack_.push_back(glIsEnabled(GL_FRAMEBUFFER_SRGB) == GL_TRUE);
+    glDisable(GL_FRAMEBUFFER_SRGB);
+}
+
+void GLDevice::EndUiPass() {
+    if (uiPassSrgbStack_.empty()) return; // EndUiPass bez BeginUiPass - nic do przywrocenia
+    const bool wasEnabled = uiPassSrgbStack_.back();
+    uiPassSrgbStack_.pop_back();
+    if (wasEnabled) glEnable(GL_FRAMEBUFFER_SRGB);
+    else glDisable(GL_FRAMEBUFFER_SRGB);
+}
+
+bool GLDevice::IsFramebufferSrgbEnabled() const { return glIsEnabled(GL_FRAMEBUFFER_SRGB) == GL_TRUE; }
 
 void GLDevice::BeginPass(RenderTargetHandle target, int width, int height, const glm::vec4& c) {
     GLuint fbo = 0;

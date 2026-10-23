@@ -305,6 +305,131 @@ std::vector<TestScene> MakeScenes() {
     return v;
 }
 
+// --- test RHI: viewport ImGui zakodowany do sRGB DOKLADNIE RAZ (GetImGuiTextureId + BeginUiPass) ---
+// Kolor celow to GL_SRGB8_ALPHA8, a GL_FRAMEBUFFER_SRGB jest wlaczone globalnie (scena: liniowo ->
+// sRGB przy zapisie). Schemat B3 (wspolny z backendem edytora #12): GetImGuiTextureId zwraca widok
+// UNORM RGBA8 (surowe bajty sRGB), a pass ImGui wylacza GL_FRAMEBUFFER_SRGB i przywraca stan po sobie.
+// Wtedy bajty sceny trafiaja na ekran 1:1. Wojcimierz nie toleruje viewportu jasniejszego ani
+// ciemniejszego niz scena - sprawdzamy to bajt po bajcie.
+const char* kSrgbViewTestName = "srgb_imgui_view";
+
+int LinearToSrgbByte(float x) {
+    const float s = x <= 0.0031308f ? 12.92f * x : 1.055f * std::pow(x, 1.0f / 2.4f) - 0.055f;
+    return static_cast<int>(s * 255.0f + 0.5f);
+}
+int SrgbByteToLinearByte(int b) {
+    const float s = b / 255.0f;
+    const float lin = s <= 0.04045f ? s / 12.92f : std::pow((s + 0.055f) / 1.055f, 2.4f);
+    return static_cast<int>(lin * 255.0f + 0.5f);
+}
+
+bool RunSrgbViewTest(rhi::Device& dev, const Resources& res, std::string& why) {
+    constexpr int N = 16;
+    static const char* kVs = R"(#version 450 core
+void main() { // pelnoekranowy trojkat z gl_VertexID - atrybuty siatki ignorowane
+    vec2 p = vec2((gl_VertexID << 1) & 2, gl_VertexID & 2);
+    gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);
+})";
+    static const char* kSolidFs = R"(#version 450 core
+uniform vec4 u_Color;
+out vec4 o_Color;
+void main() { o_Color = u_Color; })";
+    static const char* kBlitFs = R"(#version 450 core
+layout(binding = 0) uniform sampler2D u_Tex;
+out vec4 o_Color;
+void main() { o_Color = texelFetch(u_Tex, ivec2(gl_FragCoord.xy), 0); })";
+
+    const auto sceneRt = dev.CreateRenderTarget(N, N);
+    const auto outRt = dev.CreateRenderTarget(N, N); // "ekran" edytora (tez sRGB - jedna sciezka)
+    const auto solid = dev.CreateShader(kVs, kSolidFs);
+    const auto blit = dev.CreateShader(kVs, kBlitFs);
+    const auto vi = res.triangle->GetVertexInput();
+    rhi::PipelineState ps;
+    ps.depthTest = false;
+    ps.depthWrite = false;
+    ps.cullBackFaces = false;
+
+    auto draw = [&](rhi::RenderTargetHandle rt, rhi::ShaderHandle sh, auto&& setup) {
+        dev.BeginPass(rt, N, N, glm::vec4(0, 0, 0, 1));
+        dev.SetPipelineState(ps);
+        dev.BindShader(sh);
+        setup();
+        dev.DrawIndexed(vi, 3);
+        dev.EndPass();
+    };
+    auto center = [&](rhi::RenderTargetHandle rt) {
+        dev.Finish();
+        const auto px = dev.ReadPixels(rt, N, N); // surowe bajty (bez dekodowania sRGB)
+        const std::size_t i = (static_cast<std::size_t>(N / 2) * N + N / 2) * 4;
+        return glm::ivec4(px[i], px[i + 1], px[i + 2], px[i + 3]);
+    };
+    auto blitFrom = [&](std::uint32_t texName) {
+        draw(outRt, blit, [&] { dev.BindTexture(0, rhi::TextureHandle{texName}); });
+        return center(outRt);
+    };
+    auto idOf = [](void* p) { return static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(p)); };
+    auto fmt = [](glm::ivec4 c) {
+        return "(" + std::to_string(c.r) + "," + std::to_string(c.g) + "," + std::to_string(c.b) + ")";
+    };
+
+    bool ok = true;
+    auto fail = [&](const std::string& m) { if (ok) why = m; ok = false; };
+    const glm::vec4 linear(0.5f, 0.25f, 0.75f, 1.0f);
+
+    // 1. Scena: shader oddaje wartosci liniowe, zapis koduje do sRGB raz (sprzetowo).
+    if (!dev.IsFramebufferSrgbEnabled()) fail("GL_FRAMEBUFFER_SRGB powinno byc wlaczone dla sceny");
+    draw(sceneRt, solid, [&] { dev.SetUniform(solid, "u_Color", linear); });
+    const glm::ivec4 raw = center(sceneRt);
+    for (int c = 0; c < 3; ++c)
+        if (std::abs(raw[c] - LinearToSrgbByte(linear[c])) > 1)
+            fail("scena " + fmt(raw) + " nie jest zakodowana do sRGB dokladnie raz");
+
+    // 2. Identyfikator ImGui: widok UNORM (rozny od tekstury sRGB), staly miedzy wywolaniami.
+    const std::uint32_t view = idOf(dev.GetImGuiTextureId(sceneRt));
+    const std::uint32_t srgbColor = dev.GetColorTexture(sceneRt).id;
+    if (view == 0 || view == srgbColor) fail("GetImGuiTextureId nie zwraca osobnego widoku UNORM");
+    if (idOf(dev.GetImGuiTextureId(sceneRt)) != view) fail("widok ImGui nie jest staly");
+
+    // 3. Pass ImGui: kodowanie wylaczone -> bajty sceny 1:1 (zakodowane dokladnie raz).
+    glm::ivec4 viaUi, decoded;
+    {
+        rhi::ScopedUiPass ui(dev);
+        if (dev.IsFramebufferSrgbEnabled()) fail("BeginUiPass nie wylaczyl GL_FRAMEBUFFER_SRGB");
+        viaUi = blitFrom(view);
+        // Kontrola: sama tekstura sRGB dekoduje do liniowych - viewport bylby za ciemny.
+        decoded = blitFrom(srgbColor);
+    }
+    if (!dev.IsFramebufferSrgbEnabled()) fail("EndUiPass nie przywrocil GL_FRAMEBUFFER_SRGB");
+    for (int c = 0; c < 3; ++c) {
+        if (std::abs(viaUi[c] - raw[c]) > 1) fail("viewport ImGui " + fmt(viaUi) + " != bajty sceny " + fmt(raw));
+        if (std::abs(decoded[c] - SrgbByteToLinearByte(raw[c])) > 2)
+            fail("tekstura sRGB " + fmt(decoded) + " nie dekoduje sie do liniowych (surowe " + fmt(raw) + ")");
+    }
+
+    // 4. Kontrola odwrotna: widok UNORM BEZ passu UI -> drugie kodowanie (za jasno). Dlatego pass UI.
+    const glm::ivec4 twice = blitFrom(view);
+    if (ok && twice.r <= viaUi.r) fail("bez BeginUiPass widok powinien byc zakodowany drugi raz (jasniej)");
+
+    // 5. Zagniezdzanie: przywracany jest stan sprzed DANEGO BeginUiPass.
+    dev.BeginUiPass();
+    dev.BeginUiPass();
+    dev.EndUiPass();
+    if (dev.IsFramebufferSrgbEnabled()) fail("zagniezdzony EndUiPass wlaczyl kodowanie za wczesnie");
+    dev.EndUiPass();
+    if (!dev.IsFramebufferSrgbEnabled()) fail("zewnetrzny EndUiPass nie przywrocil kodowania");
+
+    if (ok)
+        why = "scena " + fmt(raw) + " ImGui " + fmt(viaUi) + " (raz), bez passu UI " + fmt(twice) +
+              " (dwa razy), tekstura sRGB " + fmt(decoded);
+
+    dev.DestroyShader(solid);
+    dev.DestroyShader(blit);
+    dev.DestroyRenderTarget(sceneRt);
+    dev.DestroyRenderTarget(outRt);
+    dev.Finish();
+    return ok;
+}
+
 struct Options {
     std::string outDir = WZ_RENDER_OUT_DIR;
     std::string only;
@@ -386,6 +511,7 @@ int main(int argc, char** argv) {
     auto scenes = MakeScenes();
     if (opt.list) {
         for (auto& s : scenes) std::printf("%-14s t=%.3fs  %s\n", s.name.c_str(), s.simulateSeconds, s.description.c_str());
+        std::printf("%-14s test RHI: viewport ImGui zakodowany do sRGB dokladnie raz\n", kSrgbViewTestName);
         return 0;
     }
 
@@ -465,6 +591,14 @@ int main(int argc, char** argv) {
             if (!ok) ++failures;
         }
         device->DestroyRenderTarget(target);
+
+        if (opt.only.empty() || opt.only == kSrgbViewTestName) {
+            ++ran;
+            std::string why;
+            const bool ok = RunSrgbViewTest(*device, res, why);
+            std::printf("[%s] %-14s %s\n", ok ? " OK " : "FAIL", kSrgbViewTestName, why.c_str());
+            if (!ok) ++failures;
+        }
         if (ran == 0) { std::fprintf(stderr, "Brak sceny o nazwie '%s' (uzyj --list)\n", opt.only.c_str()); return 1; }
         std::printf("[render_tests] scen: %d, bledow: %d\n", ran, failures);
         return failures == 0 ? 0 : 4;
