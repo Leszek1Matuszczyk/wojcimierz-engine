@@ -75,7 +75,7 @@ int Renderer::Render(const Scene& scene, rhi::RenderTargetHandle target, int wid
                 device_->BindShader(sh);
                 device_->SetUniform(sh, "u_Model", model);
                 device_->SetUniform(sh, "u_ViewProj", viewProj);
-                device_->SetUniform(sh, "u_Tint", r.color);
+                device_->SetUniform(sh, "u_Tint", r.GetShaderColor());
                 device_->SetUniform(sh, "u_LightDir", settings.lightDirection);
                 device_->SetUniform(sh, "u_Ambient", settings.ambient);
                 device_->SetUniform(sh, "u_Unlit", r.unlit ? 1.0f : 0.0f);
