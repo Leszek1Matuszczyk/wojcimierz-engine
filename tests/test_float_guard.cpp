@@ -73,7 +73,7 @@ TEST_F(FloatGuardTest, LightParametersFallBackToDefaultsAndWarnOncePerObject) {
     p.color = {kNaN, 0.5f, -kInf};
     EXPECT_FLOAT_EQ(p.GetShaderIntensity(), Light::kDefaultIntensity);
     EXPECT_FLOAT_EQ(p.GetShaderRange(), PointLight::kDefaultRange);
-    ExpectVecNear(p.GetShaderColor(), glm::vec3(1.0f)); // wektor zastepowany w calosci (jak SanitizeVec3 z #4)
+    ExpectVecNear(p.GetShaderColor(), glm::vec3(1.0f, 0.5f, 1.0f)); // kanal po kanale, poprawny 0.5 zostaje
     EXPECT_EQ(guard::NonFiniteWarningCount(), 1);           // trzy zle pola, jedno ostrzezenie
     for (int i = 0; i < 10; ++i) (void)p.GetShaderIntensity(); // "kolejne klatki"
     EXPECT_EQ(guard::NonFiniteWarningCount(), 1);
@@ -165,8 +165,9 @@ TEST_F(FloatGuardTest, MaterialParametersFallBackToDefaults) {
     m.emissive = {0.0f, kNaN, 2.0f};
     EXPECT_FLOAT_EQ(m.GetShaderMetallic(), Material::kDefaultMetallic);
     EXPECT_FLOAT_EQ(m.GetShaderRoughness(), Material::kDefaultRoughness);
-    EXPECT_EQ(m.GetShaderBaseColor(), glm::vec4(1.0f));
-    ExpectVecNear(m.GetShaderEmissive(), glm::vec3(0.0f));
+    // Kolor kanal po kanale: NaN i Inf -> 1, poprawny kanal 0.25 zostaje (zgodnie z testami #19).
+    EXPECT_EQ(m.GetShaderBaseColor(), glm::vec4(1.0f, 0.25f, 1.0f, 1.0f));
+    ExpectVecNear(m.GetShaderEmissive(), glm::vec3(0.0f, 0.0f, 2.0f)); // kanal po kanale
     EXPECT_EQ(guard::NonFiniteWarningCount(), 1);
 
     Material good;
@@ -189,4 +190,86 @@ TEST_F(FloatGuardTest, DestroyedObjectForgetsItsWarning) {
     // Ten sam adres po zniszczeniu nie jest juz "wyciszony".
     guard::WarnNonFiniteOnce(addr, "nowy", "metallic", "uzyto 0");
     EXPECT_EQ(guard::NonFiniteWarningCount(), 2);
+}
+
+// --- Ostatnia dobra wartosc (preferencja testerow): bez skokow do domyslnej ---
+
+TEST_F(FloatGuardTest, LightKeepsLastGoodValueInsteadOfDefault) {
+    Scene s;
+    auto& sp = s.CreateGameObject("Spot").AddComponent<SpotLight>();
+    sp.intensity = 7.0f;
+    sp.color = {0.2f, 0.4f, 0.6f};
+    sp.range = 3.0f;
+    sp.innerAngle = 12.0f;
+    sp.outerAngle = 25.0f;
+    // Klatka 1: wszystko dobre - zapamietane.
+    EXPECT_FLOAT_EQ(sp.GetShaderIntensity(), 7.0f);
+    ExpectVecNear(sp.GetShaderColor(), {0.2f, 0.4f, 0.6f});
+    EXPECT_FLOAT_EQ(sp.GetShaderRange(), 3.0f);
+    EXPECT_FLOAT_EQ(sp.GetShaderInnerAngle(), 12.0f);
+    EXPECT_FLOAT_EQ(sp.GetShaderOuterAngle(), 25.0f);
+    // Klatka 2: smieci z zewnatrz - zostaja OSTATNIE dobre wartosci, nie domyslne.
+    sp.intensity = kNaN;
+    sp.color = {kInf, 0.9f, kNaN};
+    sp.range = -kInf;
+    sp.innerAngle = kNaN;
+    sp.outerAngle = kInf;
+    EXPECT_FLOAT_EQ(sp.GetShaderIntensity(), 7.0f);
+    ExpectVecNear(sp.GetShaderColor(), {0.2f, 0.9f, 0.6f}); // poprawny kanal g idzie dalej
+    EXPECT_FLOAT_EQ(sp.GetShaderRange(), 3.0f);
+    EXPECT_FLOAT_EQ(sp.GetShaderInnerAngle(), 12.0f);
+    EXPECT_FLOAT_EQ(sp.GetShaderOuterAngle(), 25.0f);
+    EXPECT_EQ(guard::NonFiniteWarningCount(), 1);
+    // Klatka 3: nowa dobra wartosc staje sie "ostatnia dobra".
+    sp.intensity = 2.0f;
+    EXPECT_FLOAT_EQ(sp.GetShaderIntensity(), 2.0f);
+    sp.intensity = kInf;
+    EXPECT_FLOAT_EQ(sp.GetShaderIntensity(), 2.0f);
+    // Pakowanie swiatel tez uzywa ostatnich dobrych wartosci (bez blysku jasnosci).
+    sp.intensity = kNaN;
+    const GpuLightBlock b = PackLights(CollectLights(s, glm::vec3(0.0f)), glm::vec3(0.0f));
+    ASSERT_EQ(b.counts.z, 1);
+    ExpectVecNear(glm::vec3(b.spots[0].colorIntensity), glm::vec3(0.2f, 0.9f, 0.6f) * 2.0f);
+    EXPECT_FLOAT_EQ(b.spots[0].positionRange.w, 3.0f);
+    EXPECT_FLOAT_EQ(b.spots[0].cosInner.x, std::cos(glm::radians(12.0f)));
+}
+
+TEST_F(FloatGuardTest, MaterialKeepsLastGoodValueThenClamps) {
+    Material m;
+    m.metallic = 0.8f;
+    m.roughness = 0.3f;
+    m.baseColor = {0.1f, 0.2f, 0.3f, 0.4f};
+    m.emissive = {1.0f, 2.0f, 3.0f};
+    (void)m.GetShaderMetallic();
+    (void)m.GetShaderRoughness();
+    (void)m.GetShaderBaseColor();
+    (void)m.GetShaderEmissive();
+    m.metallic = kNaN;
+    m.roughness = -kInf;
+    m.baseColor = {kNaN, 0.7f, kInf, -kInf};
+    m.emissive = {kNaN, 5.0f, kNaN};
+    EXPECT_FLOAT_EQ(m.GetShaderMetallic(), 0.8f);
+    EXPECT_FLOAT_EQ(m.GetShaderRoughness(), 0.3f);
+    EXPECT_EQ(m.GetShaderBaseColor(), glm::vec4(0.1f, 0.7f, 0.3f, 0.4f));
+    ExpectVecNear(m.GetShaderEmissive(), {1.0f, 5.0f, 3.0f});
+    // Ostatnia dobra wartosc poza zakresem jest i tak przycinana (najpierw sanityzacja, potem clamp).
+    m.metallic = 4.0f;
+    EXPECT_FLOAT_EQ(m.GetShaderMetallic(), 1.0f);
+    m.metallic = kNaN;
+    EXPECT_FLOAT_EQ(m.GetShaderMetallic(), 1.0f);
+}
+
+TEST_F(FloatGuardTest, NeverGoodFallsBackToDefaultPerChannel) {
+    guard::LastGoodVec3 last;
+    const glm::vec3 v = guard::SanitizeVec3KeepLast({kNaN, 2.0f, kInf}, last, glm::vec3(9.0f), this, "t", "v");
+    ExpectVecNear(v, {9.0f, 2.0f, 9.0f});
+    EXPECT_TRUE(last.valid[1]);
+    EXPECT_FALSE(last.valid[0]);
+    // Nastepnym razem kanal 1 pamieta 2, kanaly 0 i 2 wciaz domyslne.
+    ExpectVecNear(guard::SanitizeVec3KeepLast({kNaN, kNaN, 4.0f}, last, glm::vec3(9.0f), this, "t", "v"), {9.0f, 2.0f, 4.0f});
+    guard::LastGoodFloat f;
+    EXPECT_FLOAT_EQ(guard::SanitizeFloatKeepLast(kNaN, f, 1.5f, this, "t", "f"), 1.5f);
+    EXPECT_FLOAT_EQ(guard::SanitizeFloatKeepLast(0.25f, f, 1.5f, this, "t", "f"), 0.25f);
+    EXPECT_FLOAT_EQ(guard::SanitizeFloatKeepLast(-kInf, f, 1.5f, this, "t", "f"), 0.25f);
+    EXPECT_EQ(guard::NonFiniteWarningCount(), 1); // jeden obiekt (this) = jedno ostrzezenie
 }

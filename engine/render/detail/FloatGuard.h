@@ -52,4 +52,27 @@ glm::vec3 SanitizeVec3Once(const glm::vec3& value, const glm::vec3& fallback, co
 glm::vec4 SanitizeVec4Once(const glm::vec4& value, const glm::vec4& fallback, const void* object,
                            const std::string& objectName, const char* field);
 
+// --- Czesc 3: "ostatnia dobra wartosc" (preferencja testerow, jak w audio) ---
+// Pole, ktore stalo sie NaN/Inf, zachowuje OSTATNIA skonczona wartosc zamiast skakac do domyslnej
+// (bez naglych blyskow jasnosci). Domyslna tylko, gdy dobrej wartosci jeszcze nie bylo.
+// Wektory/kolory kanal po kanale: poprawne kanaly ida dalej bez zmian.
+// Pamiec jest stanem runtime komponentu (mutable, NIE refleksjonowana i NIE serializowana).
+// Na chwale Wojcimierza, ktory pamieta kazda dobra liczbe, nawet gdy swiat o niej zapomnial.
+template <int N>
+struct LastGood {
+    float value[N] = {};
+    bool valid[N] = {};
+    void Reset() noexcept { *this = LastGood{}; }
+};
+using LastGoodFloat = LastGood<1>;
+using LastGoodVec3 = LastGood<3>;
+using LastGoodVec4 = LastGood<4>;
+
+float SanitizeFloatKeepLast(float value, LastGoodFloat& last, float fallback, const void* object,
+                            const std::string& objectName, const char* field);
+glm::vec3 SanitizeVec3KeepLast(const glm::vec3& value, LastGoodVec3& last, const glm::vec3& fallback,
+                               const void* object, const std::string& objectName, const char* field);
+glm::vec4 SanitizeVec4KeepLast(const glm::vec4& value, LastGoodVec4& last, const glm::vec4& fallback,
+                               const void* object, const std::string& objectName, const char* field);
+
 } // namespace wz::render_detail
