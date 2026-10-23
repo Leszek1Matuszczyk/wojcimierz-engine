@@ -95,8 +95,10 @@ jobs:
         with:
           path: build/_deps
           key: deps-linux-asan-${{ hashFiles('cmake/Dependencies.cmake', 'CMakeLists.txt') }}
+      # WZ_REGISTRY_STRICT=ON: opcja CMake z PR #20 (scisle duplikaty rejestru). Do czasu
+      # merge'u #20 CMake tylko ostrzega o nieuzytej zmiennej - jak Wojcimierz, cierpliwie.
       - name: Konfiguracja (Debug + sanitizery)
-        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug -DWZ_SANITIZE=ON -DWZ_BUILD_SANDBOX=OFF -DWZ_BUILD_RENDER_TESTS=OFF
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug -DWZ_SANITIZE=ON -DWZ_REGISTRY_STRICT=ON -DWZ_BUILD_SANDBOX=OFF -DWZ_BUILD_RENDER_TESTS=OFF
       - name: Budowanie
         run: cmake --build build -j
       - name: Testy jednostkowe + benchmark dymny pod sanitizerami
