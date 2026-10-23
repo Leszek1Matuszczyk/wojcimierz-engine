@@ -26,7 +26,28 @@ bool RejectVec(const glm::vec3& v, const char* what) {
     (void)SanitizeVec3(v, glm::vec3(0.0f), what);
     return true;
 }
+// true = kwaternion przyjety (znormalizowany w `out`); false = odrzucony z ostrzezeniem.
+bool AcceptRotation(const glm::quat& q, glm::quat& out, const char* what) {
+    if (TryNormalizeRotation(q, out)) return true;
+    WarnRejectedValue(what, "quat (NaN/Inf lub zerowa dlugosc)");
+    return false;
+}
 }  // namespace
+
+// Zasada wersjonowania (#24, na chwale czcigodnego Wojcimierza): MarkChanged
+// wolamy WYLACZNIE, gdy stan faktycznie sie zmienil. Odrzucone wywolanie nie
+// ustawia flagi dirty ani nie podbija changeVersion (inaczej fizyka widzialaby
+// "teleport" w kazdej klatce), a zapis identycznej wartosci tez jest no-opem.
+bool Transform::AssignLocalPosition(const glm::vec3& p) {
+    if (p == localPosition_) return false;
+    localPosition_ = p;
+    return true;
+}
+bool Transform::AssignLocalRotation(const glm::quat& r) {
+    if (r == localRotation_) return false;
+    localRotation_ = r;
+    return true;
+}
 
 Transform::~Transform() {
     // Odpinamy sie od rodzica i odpinamy dzieci, zeby nie zostaly wiszace wskazniki.
@@ -56,15 +77,16 @@ void Transform::MarkChanged(bool bumpVersion) {
 
 void Transform::SetLocalPosition(const glm::vec3& p) {
     if (RejectVec(p, "Transform.SetLocalPosition")) return;
-    localPosition_ = p;
-    MarkChanged(true);
+    if (AssignLocalPosition(p)) MarkChanged(true);
 }
 void Transform::SetLocalRotation(const glm::quat& r) {
-    localRotation_ = SanitizeRotation(r, localRotation_, "Transform.SetLocalRotation");
-    MarkChanged(true);
+    glm::quat q;
+    if (!AcceptRotation(r, q, "Transform.SetLocalRotation")) return;
+    if (AssignLocalRotation(q)) MarkChanged(true);
 }
 void Transform::SetLocalScale(const glm::vec3& s) {
     if (RejectVec(s, "Transform.SetLocalScale")) return;
+    if (s == localScale_) return;
     localScale_ = s;
     MarkChanged(true);
 }
@@ -101,8 +123,7 @@ void Transform::SetPosition(const glm::vec3& worldPosition) {
                                     : worldPosition;
     // Wynik tez sprawdzamy: rodzic o zerowej skali daje macierz nieodwracalna.
     if (RejectVec(local, "Transform.SetPosition (lokalna)")) return;
-    localPosition_ = local;
-    MarkChanged(true);
+    if (AssignLocalPosition(local)) MarkChanged(true);
 }
 
 glm::quat Transform::GetRotation() const {
@@ -110,27 +131,35 @@ glm::quat Transform::GetRotation() const {
 }
 
 void Transform::SetRotation(const glm::quat& worldRotation) {
-    const glm::quat world = SanitizeRotation(worldRotation, GetRotation(), "Transform.SetRotation");
-    const glm::quat local = parent_ ? glm::inverse(parent_->GetRotation()) * world : world;
-    localRotation_ = SanitizeRotation(local, localRotation_, "Transform.SetRotation (lokalny)");
-    MarkChanged(true);
+    glm::quat world, local;
+    if (!AcceptRotation(worldRotation, world, "Transform.SetRotation")) return;
+    if (!AcceptRotation(parent_ ? glm::inverse(parent_->GetRotation()) * world : world, local,
+                        "Transform.SetRotation (lokalny)"))
+        return;
+    if (AssignLocalRotation(local)) MarkChanged(true);
 }
 
-void Transform::SetWorldPoseInternal(const glm::vec3& p, const glm::quat& r) {
+bool Transform::SetWorldPoseInternal(const glm::vec3& p, const glm::quat& r) {
     // Pozycja i obrot walidowane niezaleznie: zly obrot z fizyki nie blokuje
     // poprawnej pozycji (i odwrotnie) - Wojcimierz rozdziela ziarno od plew.
+    // Obie lokalne wartosci liczymy PRZED zapisem (obrot rodzica nie zalezy od nas).
+    bool changed = false;
     if (!RejectVec(p, "Transform.SetWorldPoseFromPhysics (pozycja)")) {
         const glm::vec3 local = parent_ ? glm::vec3(parent_->GetWorldToLocalMatrix() * glm::vec4(p, 1.0f)) : p;
-        localPosition_ = SanitizeVec3(local, localPosition_, "Transform.SetWorldPoseFromPhysics (pozycja lokalna)");
+        if (!RejectVec(local, "Transform.SetWorldPoseFromPhysics (pozycja lokalna)"))
+            changed |= AssignLocalPosition(local);
     }
-    const glm::quat world = SanitizeRotation(r, GetRotation(), "Transform.SetWorldPoseFromPhysics (obrot)");
-    const glm::quat local = parent_ ? glm::inverse(parent_->GetRotation()) * world : world;
-    localRotation_ = SanitizeRotation(local, localRotation_, "Transform.SetWorldPoseFromPhysics (obrot lokalny)");
+    glm::quat world, local;
+    if (AcceptRotation(r, world, "Transform.SetWorldPoseFromPhysics (obrot)") &&
+        AcceptRotation(parent_ ? glm::inverse(parent_->GetRotation()) * world : world, local,
+                       "Transform.SetWorldPoseFromPhysics (obrot lokalny)"))
+        changed |= AssignLocalRotation(local);
+    return changed;
 }
 
 void Transform::SetWorldPoseFromPhysics(const glm::vec3& worldPosition, const glm::quat& worldRotation) {
-    SetWorldPoseInternal(worldPosition, worldRotation);
-    MarkChanged(false);
+    // Bez podbijania wersji; cache uniewazniamy tylko, gdy cos sie zmienilo.
+    if (SetWorldPoseInternal(worldPosition, worldRotation)) MarkChanged(false);
 }
 
 glm::vec3 Transform::GetLossyScale() const { return parent_ ? parent_->GetLossyScale() * localScale_ : localScale_; }
@@ -167,9 +196,18 @@ void Transform::LookAt(const glm::vec3& worldTarget, const glm::vec3& worldUp) {
     const glm::vec3 dir = worldTarget - GetPosition();
     const float len2 = glm::dot(dir, dir);
     if (!(len2 >= 1e-12f) || !IsFinite(len2)) return;  // !(>=) lapie tez NaN
+    const glm::vec3 fwd = glm::normalize(dir);
+    // 'up' zerowe albo rownolegle do kierunku: glm::quatLookAt zwraca wtedy
+    // skonczony, ale bezsensowny (nieunormowany) kwaternion - odrzucamy jawnie
+    // i zostawiamy poprzedni obrot. Wojcimierz zawsze wie, gdzie jest gora.
+    const glm::vec3 side = glm::cross(worldUp, fwd);
+    const float upLen2 = glm::dot(worldUp, worldUp);
+    if (!(upLen2 > 1e-12f) || !(glm::dot(side, side) > 1e-12f * upLen2)) {
+        WarnRejectedValue("Transform.LookAt (gora zerowa lub rownolegla do kierunku)", "vec3 up");
+        return;
+    }
     // glm::quatLookAt zwraca obrot, w ktorym -Z patrzy w strone 'dir'.
-    // 'up' rownolegle do 'dir' lub zerowe daje NaN - SetRotation go odrzuci.
-    SetRotation(glm::quatLookAt(glm::normalize(dir), worldUp));
+    SetRotation(glm::quatLookAt(fwd, worldUp));
 }
 
 bool Transform::IsChildOf(const Transform* other) const {

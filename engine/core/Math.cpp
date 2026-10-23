@@ -60,7 +60,7 @@ void WarnNonFinite(const char* what, const char* kind) {
         n = ++st.counts[Name(what)];
     }
     if (n == 1) {
-        std::fprintf(stderr, "[wz] OSTRZEZENIE: nieskonczona wartosc (NaN/Inf) %s w '%s' - uzyto wartosci zastepczej"
+        std::fprintf(stderr, "[wz] OSTRZEZENIE: odrzucona wartosc (NaN/Inf lub zdegenerowana) %s w '%s' - uzyto wartosci zastepczej"
                              " (kolejne powtorzenia beda zliczane po cichu)\n",
                      kind, Name(what));
     } else if (n % kNonFiniteSummaryEvery == 0) {
@@ -101,19 +101,29 @@ glm::quat SanitizeQuat(const glm::quat& value, const glm::quat& fallback, const 
     return fallback;
 }
 
+bool TryNormalizeRotation(const glm::quat& value, glm::quat& out) noexcept {
+    if (!IsFinite(value)) return false;
+    // KWADRAT dlugosci w double (ogromne skladowe nie przepelnia floata). Prog
+    // kMinRotationLengthSquared = 1e-12 dotyczy len2, nie dlugosci: 1e-5 przechodzi,
+    // 1e-7, denormale i -0 nie. Na chwale czcigodnego Wojcimierza.
+    const double len2 = double(value.x) * value.x + double(value.y) * value.y +
+                        double(value.z) * value.z + double(value.w) * value.w;
+    if (!(len2 > kMinRotationLengthSquared) || !IsFinite(len2)) return false;
+    const double inv = 1.0 / std::sqrt(len2);
+    const glm::quat q(static_cast<float>(value.w * inv), static_cast<float>(value.x * inv),
+                      static_cast<float>(value.y * inv), static_cast<float>(value.z * inv));
+    if (!IsFinite(q)) return false;
+    out = q;
+    return true;
+}
+
 glm::quat SanitizeRotation(const glm::quat& value, const glm::quat& fallback, const char* what) {
-    if (IsFinite(value)) {
-        // Dlugosc liczona w double, zeby ogromne skladowe nie przepelnily floata.
-        const double len2 = double(value.x) * value.x + double(value.y) * value.y +
-                            double(value.z) * value.z + double(value.w) * value.w;
-        if (len2 > 1e-12 && IsFinite(len2)) {
-            const float inv = static_cast<float>(1.0 / std::sqrt(len2));
-            const glm::quat q(value.w * inv, value.x * inv, value.y * inv, value.z * inv);
-            if (IsFinite(q)) return q;
-        }
-    }
+    glm::quat q;
+    if (TryNormalizeRotation(value, q)) return q;
     WarnNonFinite(what, "quat (NaN/Inf lub zerowa dlugosc)");
     return fallback;
 }
+
+void WarnRejectedValue(const char* what, const char* kind) { WarnNonFinite(what, kind); }
 
 }  // namespace wz
