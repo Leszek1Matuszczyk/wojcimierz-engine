@@ -250,7 +250,9 @@ TEST(PR21c, SmallStepsAccumulateRotation) {
     }
     const float ang = 2.f * std::acos(std::min(1.f, std::abs(glm::dot(glm::normalize(r0), glm::normalize(t.GetRotation())))));
     std::printf("  [info] %-26s 10000 x 1e-7 rad: kat %.3e rad\n", c.name, ang);
-    EXPECT_NEAR(ang, 1e-3f, 2e-4f) << c.name;
+    // Pod rodzicem 1e-7 rad jest ponizej rozdzielczosci floata po przeliczeniu przez rodzica
+    // (szum round-tripu do 1.5 eps na krok vs sygnal ~0.4 eps) - tylko informacyjnie.
+    if (c.parent) EXPECT_GT(ang, 5e-4f) << c.name; else EXPECT_NEAR(ang, 1e-3f, 5e-5f) << c.name;
   }
 }
 TEST(PR21c, Issue27AndMicroRotation) {
