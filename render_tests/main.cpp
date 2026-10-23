@@ -303,6 +303,105 @@ std::vector<TestScene> MakeScenes() {
     return v;
 }
 
+// --- test RHI: widok RGBA8 koloru sRGB dla ImGui (GetImGuiTextureId) ---
+// Po feat/core-ci kolor celow to GL_SRGB8_ALPHA8, a ImGui rysuje z wylaczonym GL_FRAMEBUFFER_SRGB.
+// Probkowanie samej tekstury sRGB dekodowaloby bajty do liniowych (viewport za ciemny),
+// wiec GetImGuiTextureId musi zwrocic widok, ktory oddaje SUROWE bajty sRGB.
+// Wojcimierz nie toleruje viewportu ciemniejszego niz scena - sprawdzamy to bajt po bajcie.
+const char* kSrgbViewTestName = "srgb_imgui_view";
+
+bool RunSrgbViewTest(rhi::Device& dev, const Resources& res, std::string& why) {
+    constexpr int N = 16;
+    static const char* kVs = R"(#version 450 core
+void main() { // pelnoekranowy trojkat z gl_VertexID - atrybuty siatki ignorowane
+    vec2 p = vec2((gl_VertexID << 1) & 2, gl_VertexID & 2);
+    gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);
+})";
+    static const char* kSolidFs = R"(#version 450 core
+uniform vec4 u_Color;
+out vec4 o_Color;
+void main() { o_Color = u_Color; })";
+    static const char* kBlitFs = R"(#version 450 core
+layout(binding = 0) uniform sampler2D u_Tex;
+out vec4 o_Color;
+void main() { o_Color = texelFetch(u_Tex, ivec2(gl_FragCoord.xy), 0); })";
+
+    const auto srgbRt = dev.CreateRenderTarget(rhi::RenderTargetDesc{N, N, true});
+    const auto plainRt = dev.CreateRenderTarget(rhi::RenderTargetDesc{N, N, false});
+    const auto outRt = dev.CreateRenderTarget(N, N);
+    const auto solid = dev.CreateShader(kVs, kSolidFs);
+    const auto blit = dev.CreateShader(kVs, kBlitFs);
+    const auto vi = res.triangle->GetVertexInput();
+    rhi::PipelineState ps;
+    ps.depthTest = false;
+    ps.depthWrite = false;
+    ps.cullBackFaces = false;
+
+    auto draw = [&](rhi::RenderTargetHandle rt, rhi::ShaderHandle sh, auto&& setup) {
+        dev.BeginPass(rt, N, N, glm::vec4(0, 0, 0, 1));
+        dev.SetPipelineState(ps);
+        dev.BindShader(sh);
+        setup();
+        dev.DrawIndexed(vi, 3);
+        dev.EndPass();
+    };
+    auto center = [&](rhi::RenderTargetHandle rt) {
+        dev.Finish();
+        const auto px = dev.ReadPixels(rt, N, N);
+        const std::size_t i = (static_cast<std::size_t>(N / 2) * N + N / 2) * 4;
+        return glm::ivec4(px[i], px[i + 1], px[i + 2], px[i + 3]);
+    };
+    auto blitFrom = [&](std::uint32_t texName) {
+        draw(outRt, blit, [&] { dev.BindTexture(0, rhi::TextureHandle{texName}); });
+        return center(outRt);
+    };
+    auto idOf = [](void* p) { return static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(p)); };
+    auto fmt = [](glm::ivec4 c) {
+        return "(" + std::to_string(c.r) + "," + std::to_string(c.g) + "," + std::to_string(c.b) + ")";
+    };
+
+    bool ok = true;
+    auto fail = [&](const std::string& m) { if (ok) why = m; ok = false; };
+
+    // 1. Render do celu sRGB; surowe bajty bierzemy z ReadPixels (glReadPixels nie dekoduje sRGB),
+    //    wiec test dziala zarowno przed, jak i po wlaczeniu GL_FRAMEBUFFER_SRGB w feat/core-ci.
+    draw(srgbRt, solid, [&] { dev.SetUniform(solid, "u_Color", glm::vec4(0.5f, 0.25f, 0.75f, 1.0f)); });
+    const glm::ivec4 raw = center(srgbRt);
+
+    // 2. Identyfikatory: sRGB -> widok (rozny od koloru, w cache), RGBA8 -> sama tekstura koloru.
+    const std::uint32_t view = idOf(dev.GetImGuiTextureId(srgbRt));
+    const std::uint32_t srgbColor = dev.GetColorTexture(srgbRt).id;
+    if (view == 0 || view == srgbColor) fail("GetImGuiTextureId(sRGB) nie zwraca osobnego widoku");
+    if (idOf(dev.GetImGuiTextureId(srgbRt)) != view) fail("widok sRGB nie jest cachowany");
+    if (idOf(dev.GetImGuiTextureId(plainRt)) != dev.GetColorTexture(plainRt).id)
+        fail("GetImGuiTextureId(RGBA8) powinno zwracac teksture koloru");
+
+    // 3. Probkowanie widoku = surowe bajty sRGB (to zobaczy ImGui).
+    const glm::ivec4 viaView = blitFrom(view);
+    for (int c = 0; c < 3; ++c)
+        if (std::abs(viaView[c] - raw[c]) > 1) fail("widok " + fmt(viaView) + " != surowe bajty sRGB " + fmt(raw));
+
+    // 4. Kontrola: sama tekstura sRGB dekoduje do liniowych - wyraznie ciemniej (stad potrzeba widoku).
+    const glm::ivec4 viaColor = blitFrom(srgbColor);
+    for (int c = 0; c < 3; ++c) {
+        const float s = raw[c] / 255.0f;
+        const float lin = s <= 0.04045f ? s / 12.92f : std::pow((s + 0.055f) / 1.055f, 2.4f);
+        if (std::abs(viaColor[c] - static_cast<int>(lin * 255.0f + 0.5f)) > 2)
+            fail("tekstura sRGB " + fmt(viaColor) + " nie dekoduje sie do liniowych (surowe " + fmt(raw) + ")");
+    }
+    if (ok && viaColor.r >= viaView.r) fail("dekodowana tekstura nie jest ciemniejsza od widoku");
+    if (ok) why = "surowe " + fmt(raw) + " widok " + fmt(viaView) + " tekstura sRGB " + fmt(viaColor);
+
+    // 5. Zniszczenie targetu usuwa tez widok (brak bledu GL i wyciekow; DestroyRenderTarget idempotentny).
+    dev.DestroyShader(solid);
+    dev.DestroyShader(blit);
+    dev.DestroyRenderTarget(srgbRt);
+    dev.DestroyRenderTarget(plainRt);
+    dev.DestroyRenderTarget(outRt);
+    dev.Finish();
+    return ok;
+}
+
 struct Options {
     std::string outDir = WZ_RENDER_OUT_DIR;
     std::string only;
@@ -338,6 +437,7 @@ int main(int argc, char** argv) {
     auto scenes = MakeScenes();
     if (opt.list) {
         for (auto& s : scenes) std::printf("%-14s t=%.3fs  %s\n", s.name.c_str(), s.simulateSeconds, s.description.c_str());
+        std::printf("%-14s test RHI: GetImGuiTextureId zwraca widok RGBA8 koloru sRGB\n", kSrgbViewTestName);
         return 0;
     }
 
@@ -436,6 +536,14 @@ int main(int argc, char** argv) {
             if (!ok) ++failures;
         }
         device->DestroyRenderTarget(target);
+
+        if (opt.only.empty() || opt.only == kSrgbViewTestName) {
+            ++ran;
+            std::string why;
+            const bool ok = RunSrgbViewTest(*device, res, why);
+            std::printf("[%s] %-14s %s\n", ok ? " OK " : "FAIL", kSrgbViewTestName, why.c_str());
+            if (!ok) ++failures;
+        }
         if (ran == 0) { std::fprintf(stderr, "Brak sceny o nazwie '%s' (uzyj --list)\n", opt.only.c_str()); return 1; }
         std::printf("[render_tests] scen: %d, bledow: %d\n", ran, failures);
         return failures == 0 ? 0 : 4;
