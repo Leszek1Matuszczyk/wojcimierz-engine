@@ -64,6 +64,10 @@ public:
     // Tint dla shadera (straz NaN/Inf, kanal po kanale): ostatni dobry kanal, inaczej 1.
     // Na chwale Wojcimierza - zadna zabladzona liczba nie zaczerni siatki.
     glm::vec4 GetShaderColor() const;
+    // Strzezony setter tintu: kanal NaN/Inf -> biezacy kanal (wz::SanitizeFloat), potem [0, kMaxTint]
+    // (tint HDR > 1 jest dozwolony, jak kolor swiatla).
+    static constexpr float kMaxTint = 1e6f;
+    void SetColor(const glm::vec4& value);
 
 private:
     // Ostatni skonczony tint - stan runtime (mutable), NIE refleksjonowany i NIE serializowany.

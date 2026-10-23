@@ -49,6 +49,17 @@ public:
     float GetShaderShadowBias() const;
     float GetShaderNormalBias() const;
 
+    // --- strzezone settery (edytor, refleksja, skrypty) ---
+    // Kolejnosc: NAJPIERW sanityzacja wz::SanitizeFloat/SanitizeVec3 (core/Math.h) - NaN/Inf
+    // zostawia biezaca wartosc pola (z ostrzezeniem na stderr) - POTEM clamp do zakresu getterow
+    // GetShader*. Bezposredni zapis do pol publicznych nadal dziala i jest strzezony w getterach.
+    void SetColor(const glm::vec3& value);      // kanaly [0, kMaxColor]
+    void SetIntensity(float value);             // [0, kMaxIntensity]
+    void SetCastShadows(bool value) { castShadows = value; }
+    void SetShadowStrength(float value);        // [0, 1]
+    void SetShadowBias(float value);            // [0, kMaxShadowBias]
+    void SetNormalBias(float value);            // [0, kMaxNormalBias]
+
     virtual LightType GetType() const = 0;
 
     // Swiatlo ma jakikolwiek wplyw na obraz (intensywnosc i kolor > 0, po sanityzacji).
@@ -104,6 +115,7 @@ public:
     LightType GetType() const override { return LightType::Point; }
     bool HasFiniteTransform() const override { return CheckFinitePosition(); }
     float GetShaderRange() const; // NaN/Inf -> ostatni dobry, inaczej kDefaultRange; potem 0 (wylaczone) albo [kMinLightRange, kMaxLightRange]
+    void SetRange(float value);   // NaN/Inf -> bez zmian; <= 0 -> 0 (wylaczone), inaczej [kMinLightRange, kMaxLightRange]
 };
 
 class SpotLight final : public Light {
@@ -123,6 +135,11 @@ public:
     float GetShaderRange() const;      // NaN/Inf -> ostatni dobry, inaczej kDefaultRange; 0 albo [kMinLightRange, kMaxLightRange]
     float GetShaderInnerAngle() const; // NaN/Inf -> ostatni dobry, inaczej kDefaultInnerAngle; [kMinAngle, outer]
     float GetShaderOuterAngle() const; // NaN/Inf -> ostatni dobry, inaczej kDefaultOuterAngle; [kMinAngle, kMaxAngle]
+    void SetRange(float value);        // jak PointLight::SetRange
+    // Katy: NaN/Inf -> bez zmian, potem [kMinAngle, kMaxAngle]. Relacji inner <= outer setter
+    // NIE wymusza (zalezy od kolejnosci wczytywania pol) - pilnuje jej GetShaderInnerAngle.
+    void SetInnerAngle(float value);
+    void SetOuterAngle(float value);
 };
 
 namespace lighting {

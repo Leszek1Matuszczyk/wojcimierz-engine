@@ -108,6 +108,41 @@ float SpotLight::GetShaderOuterAngle() const {
     return guard::ClampOnce(v, kMinAngle, kMaxAngle, this, n, "outerAngle");
 }
 
+// --- strzezone settery: najpierw wz::Sanitize* (NaN/Inf -> biezaca wartosc), potem clamp ---
+// Nazwy w ostrzezeniach to "Typ.pole" - komponent z rejestru moze nie miec jeszcze GameObjectu.
+
+namespace {
+float GuardedFloat(float value, float current, float lo, float hi, const char* what) {
+    return std::clamp(wz::SanitizeFloat(value, current, what), lo, hi);
+}
+float GuardedRange(float value, float current, const char* what) {
+    const float v = wz::SanitizeFloat(value, current, what);
+    return v <= 0.0f ? 0.0f : std::clamp(v, kMinLightRange, kMaxLightRange);
+}
+} // namespace
+
+void Light::SetColor(const glm::vec3& value) {
+    color = glm::clamp(wz::SanitizeVec3(value, color, "Light.color"), glm::vec3(0.0f), glm::vec3(kMaxColor));
+}
+void Light::SetIntensity(float value) { intensity = GuardedFloat(value, intensity, 0.0f, kMaxIntensity, "Light.intensity"); }
+void Light::SetShadowStrength(float value) {
+    shadowStrength = GuardedFloat(value, shadowStrength, 0.0f, 1.0f, "Light.shadowStrength");
+}
+void Light::SetShadowBias(float value) {
+    shadowBias = GuardedFloat(value, shadowBias, 0.0f, kMaxShadowBias, "Light.shadowBias");
+}
+void Light::SetNormalBias(float value) {
+    normalBias = GuardedFloat(value, normalBias, 0.0f, kMaxNormalBias, "Light.normalBias");
+}
+void PointLight::SetRange(float value) { range = GuardedRange(value, range, "PointLight.range"); }
+void SpotLight::SetRange(float value) { range = GuardedRange(value, range, "SpotLight.range"); }
+void SpotLight::SetInnerAngle(float value) {
+    innerAngle = GuardedFloat(value, innerAngle, kMinAngle, kMaxAngle, "SpotLight.innerAngle");
+}
+void SpotLight::SetOuterAngle(float value) {
+    outerAngle = GuardedFloat(value, outerAngle, kMinAngle, kMaxAngle, "SpotLight.outerAngle");
+}
+
 namespace lighting {
 
 float DistanceAttenuation(float distance, float range) {

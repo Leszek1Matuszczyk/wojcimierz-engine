@@ -14,6 +14,7 @@ add_executable(wz_unit_tests
   test_uuid.cpp
   test_reflection.cpp
   test_registration.cpp
+  test_render_registration.cpp
   test_lighting.cpp
   test_material.cpp
   test_gltf_import.cpp

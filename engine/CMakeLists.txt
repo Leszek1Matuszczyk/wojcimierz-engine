@@ -24,6 +24,7 @@ add_library(wz_core STATIC
   render/Shadows.cpp
   render/Material.cpp
   render/MeshRenderer.cpp
+  render/RenderComponents.cpp
   render/detail/FloatGuard.cpp)
 target_include_directories(wz_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(wz_core PUBLIC glm::glm PRIVATE stb_headers)
