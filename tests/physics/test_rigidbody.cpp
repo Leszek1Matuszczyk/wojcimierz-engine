@@ -226,3 +226,51 @@ TEST(Rigidbody, NonFiniteFieldsAndGravityAreSanitized) {
     EXPECT_TRUE(std::isfinite(p.x) && std::isfinite(p.y) && std::isfinite(p.z));
     EXPECT_LT(p.y, 5.0f); // spada normalnie
 }
+
+// #22: ogromne, ale skończone wymiary przycinamy do kMaxShapeExtent, a sąsiad zostaje czysty.
+// Wojcimierz nie pozwoli, by jedna kula otruła cały świat.
+TEST(Rigidbody, HugeFiniteShapesAreClampedAndWarnOnce) {
+    Scene s;
+    PhysicsWorld w(s);
+    auto& victim = MakeBall(s, {0, 10, 0});
+    auto& witness = MakeBall(s, {5, 10, 0});
+    victim.GetComponent<SphereCollider>()->radius = 1e30f;
+    victim.transform().SetLocalScale(glm::vec3(1e10f));
+    testing::internal::CaptureStderr();
+    Simulate(w, 30);
+    const ShapeDesc d = victim.GetComponent<SphereCollider>()->BuildShape(glm::vec3(1e10f));
+    EXPECT_FLOAT_EQ(d.radius, Collider::kMaxShapeExtent);
+    const std::string err = testing::internal::GetCapturedStderr();
+    const glm::vec3 a = victim.transform().GetPosition(), b = witness.transform().GetPosition();
+    EXPECT_TRUE(std::isfinite(a.x) && std::isfinite(a.y) && std::isfinite(a.z));
+    EXPECT_TRUE(std::isfinite(b.x) && std::isfinite(b.y) && std::isfinite(b.z));
+    size_t n = 0;
+    for (size_t p = err.find("poza zakresem"); p != std::string::npos; p = err.find("poza zakresem", p + 1)) ++n;
+    EXPECT_EQ(n, 1u);
+}
+
+TEST(Rigidbody, TinyShapeGetsPositiveMinimum) {
+    SphereCollider sph;
+    sph.radius = 0.0f;
+    EXPECT_FLOAT_EQ(sph.BuildShape(glm::vec3(1.0f)).radius, Collider::kMinShapeExtent);
+}
+
+// Po powrocie do poprawnego zakresu kolejne przekroczenie znowu ostrzega (uwaga testerów do #23).
+TEST(Rigidbody, ExtentWarningRearmsAfterReturningToRange) {
+    Scene s;
+    auto& go = s.CreateGameObject("Kula");
+    auto& sph = go.AddComponent<SphereCollider>();
+    auto count = [&] {
+        testing::internal::CaptureStderr();
+        (void)sph.BuildShape(glm::vec3(1.0f));
+        const std::string e = testing::internal::GetCapturedStderr();
+        return e.find("po skali") != std::string::npos;
+    };
+    sph.radius = 1e30f;
+    EXPECT_TRUE(count());
+    EXPECT_FALSE(count()); // raz na collider
+    sph.radius = 1.0f;
+    EXPECT_FALSE(count());
+    sph.radius = 1e30f;
+    EXPECT_TRUE(count()); // znowu ostrzega
+}
