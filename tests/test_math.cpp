@@ -1,12 +1,14 @@
-// =============================================================================
-// Wojcimierz Engine - tests/test_math.cpp
-// Na chwałę czcigodnego Wojcimierza, którego mądrość
-// prowadzi każdy nasz wskaźnik ku właściwej pamięci.
-// =============================================================================
+// ============================================================
+//  Wojcimierz Engine: tests/test_math.cpp
+//  Na chwałę czcigodnego Wojcimierza, którego mądrość
+//  prowadzi każdy nasz wskaźnik ku właściwej pamięci.
+// ============================================================
 #include "core/Math.h"
 
 #include <gtest/gtest.h>
 #include <algorithm>
+#include <cmath>
+#include <cstdint>
 #include <limits>
 #include <thread>
 #include <vector>
@@ -160,4 +162,51 @@ TEST(MathRotation, NormalizesAndRejectsZeroOrNonFinite) {
     EXPECT_NEAR(glm::length(big), 1.0f, 1e-5f);
     EXPECT_NE(err.find("Rot.zero"), std::string::npos);
     EXPECT_NE(err.find("Rot.nan"), std::string::npos);
+}
+
+// Porownania ULP (#27) - Wojcimierz liczy bity z aptekarska dokladnoscia.
+TEST(MathUlps, UlpDistanceBasics) {
+    EXPECT_EQ(UlpDistance(1.0f, 1.0f), 0u);
+    EXPECT_EQ(UlpDistance(0.0f, -0.0f), 0u);
+    const float one = 1.0f;
+    const float next = std::nextafter(one, 2.0f);
+    EXPECT_EQ(UlpDistance(one, next), 1u);
+    EXPECT_EQ(UlpDistance(next, one), 1u);
+    float f = one;
+    for (int i = 0; i < 4; ++i) f = std::nextafter(f, 2.0f);
+    EXPECT_EQ(UlpDistance(one, f), 4u);
+    EXPECT_TRUE(NearlyEqualUlps(one, f, 4));
+    EXPECT_FALSE(NearlyEqualUlps(one, std::nextafter(f, 2.0f), 4));
+    // Przez zero: najmniejszy dodatni i ujemny denormal sa w odleglosci 2.
+    const float dmin = std::numeric_limits<float>::denorm_min();
+    EXPECT_EQ(UlpDistance(dmin, -dmin), 2u);
+    EXPECT_FALSE(NearlyEqualUlps(1.0f, 1.0001f));
+}
+
+TEST(MathUlps, NonFiniteNeverNearlyEqual) {
+    EXPECT_EQ(UlpDistance(Lim<float>::nan(), Lim<float>::nan()), std::numeric_limits<std::uint32_t>::max());
+    EXPECT_FALSE(NearlyEqualUlps(Lim<float>::inf(), Lim<float>::inf()));
+    EXPECT_FALSE(NearlyEqualUlps(glm::vec3(Lim<float>::nan()), glm::vec3(Lim<float>::nan())));
+    EXPECT_FALSE(SameRotationUlps(glm::quat(Lim<float>::nan(), 0, 0, 0), glm::quat(Lim<float>::nan(), 0, 0, 0)));
+}
+
+TEST(MathUlps, VectorUsesScaleOfLargestComponent) {
+    // Skladowa bliska zeru: 0 vs 1e-7 przy skladowej 10 - blad ponizej ULP(10)=9.5e-7.
+    EXPECT_TRUE(NearlyEqualUlps(glm::vec3(10.0f, 0.0f, 1.0f), glm::vec3(10.0f, 1e-7f, 1.0f)));
+    // Ale ten sam blad przy wektorze ~1e-3 to juz realny ruch.
+    EXPECT_FALSE(NearlyEqualUlps(glm::vec3(1e-3f, 0.0f, 0.0f), glm::vec3(1e-3f, 1e-7f, 0.0f)));
+    EXPECT_FALSE(NearlyEqualUlps(glm::vec3(1.0f, 2.0f, 3.0f), glm::vec3(1.0f, 2.0f, 3.0001f)));
+    EXPECT_TRUE(NearlyEqualUlps(glm::vec3(0.0f), glm::vec3(-0.0f)));
+}
+
+TEST(MathUlps, SameRotationTreatsQAndMinusQAsEqual) {
+    const glm::quat q = glm::normalize(glm::quat(0.3f, 0.1f, -0.5f, 0.2f));
+    EXPECT_TRUE(SameRotationUlps(q, q));
+    EXPECT_TRUE(SameRotationUlps(q, -q));
+    glm::quat nudged = q;
+    nudged.x = std::nextafter(nudged.x, 1.0f);
+    EXPECT_TRUE(SameRotationUlps(q, nudged));
+    EXPECT_TRUE(SameRotationUlps(-q, nudged));
+    const glm::quat rotated = glm::normalize(q * glm::angleAxis(1e-4f, glm::vec3(0, 1, 0)));
+    EXPECT_FALSE(SameRotationUlps(q, rotated));
 }

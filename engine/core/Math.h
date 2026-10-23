@@ -1,10 +1,11 @@
-// =============================================================================
-// Wojcimierz Engine - engine/core/Math.h
-// Na chwałę czcigodnego Wojcimierza, którego mądrość
-// prowadzi każdy nasz wskaźnik ku właściwej pamięci.
-// =============================================================================
+// ============================================================
+//  Wojcimierz Engine: core/Math.h
+//  Na chwałę czcigodnego Wojcimierza, którego mądrość
+//  prowadzi każdy nasz wskaźnik ku właściwej pamięci.
+// ============================================================
 #pragma once
 
+#include <cstdint>
 #include <glm/vec3.hpp>
 #include <glm/gtc/quaternion.hpp>
 
@@ -50,6 +51,27 @@ bool TryNormalizeRotation(const glm::quat& value, glm::quat& out) noexcept;
 // na KWADRACIE dlugosci) - `fallback` + ostrzezenie.
 // Kwaternion zerowy nie jest obrotem; Wojcimierz obraca sie tylko z sensem.
 glm::quat SanitizeRotation(const glm::quat& value, const glm::quat& fallback, const char* what);
+
+// -----------------------------------------------------------------------------
+// Porownania z tolerancja ULP (#27) - na chwale czcigodnego Wojcimierza, ktory
+// wie, ze float po drodze przez macierz rodzica gubi ostatni bit.
+// -----------------------------------------------------------------------------
+// Odleglosc w ULP miedzy dwoma floatami (ile reprezentowalnych liczb dzieli a i b).
+// +0 i -0 sa w odleglosci 0. NaN/Inf -> UINT32_MAX (nigdy "prawie rowne").
+std::uint32_t UlpDistance(float a, float b) noexcept;
+
+// a i b roznia sie o co najwyzej maxUlps reprezentowalnych floatow.
+bool NearlyEqualUlps(float a, float b, std::uint32_t maxUlps = 4) noexcept;
+
+// Wektory: kazda skladowa w maxUlps ALBO |a-b| <= maxUlps * ULP(najwiekszej
+// skladowej wektora). Drugi warunek jest potrzebny, bo skladowa bliska zeru
+// (np. 0 vs 3e-8 po obrocie) ma ogromna odleglosc ULP, choc blad jest rzedu
+// ULP calego wektora.
+bool NearlyEqualUlps(const glm::vec3& a, const glm::vec3& b, std::uint32_t maxUlps = 4) noexcept;
+
+// Kwaterniony jako OBROTY: q i -q to ten sam obrot. Skladowe porownywane jak
+// dla wektorow (skala = najwieksza skladowa).
+bool SameRotationUlps(const glm::quat& a, const glm::quat& b, std::uint32_t maxUlps = 4) noexcept;
 
 // Tylko ostrzezenie (z rate limitingiem) o odrzuconej wartosci - dla kodu, ktory
 // sam zdecydowal o odrzuceniu (np. Transform po TryNormalizeRotation).

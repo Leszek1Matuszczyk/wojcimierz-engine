@@ -1,13 +1,15 @@
-// =============================================================================
-// Wojcimierz Engine - engine/core/Math.cpp
-// Na chwałę czcigodnego Wojcimierza, którego mądrość
-// prowadzi każdy nasz wskaźnik ku właściwej pamięci.
-// =============================================================================
+// ============================================================
+//  Wojcimierz Engine: core/Math.cpp
+//  Na chwałę czcigodnego Wojcimierza, którego mądrość
+//  prowadzi każdy nasz wskaźnik ku właściwej pamięci.
+// ============================================================
 #include "core/Math.h"
 
 #include <bit>
 #include <cstdint>
+#include <algorithm>
 #include <cmath>
+#include <limits>
 #include <cstdio>
 #include <mutex>
 #include <string>
@@ -125,5 +127,51 @@ glm::quat SanitizeRotation(const glm::quat& value, const glm::quat& fallback, co
 }
 
 void WarnRejectedValue(const char* what, const char* kind) { WarnNonFinite(what, kind); }
+
+namespace {
+// Mapowanie bitow floata na monotoniczna os liczb calkowitych (ujemne odbite),
+// tak ze sasiednie floaty roznia sie o 1, a +0 i -0 trafiaja w to samo miejsce.
+std::int64_t OrderedBits(float v) noexcept {
+    const auto bits = std::bit_cast<std::uint32_t>(v);
+    return (bits & 0x80000000u) ? -static_cast<std::int64_t>(bits & 0x7FFFFFFFu) : static_cast<std::int64_t>(bits);
+}
+// Wielkosc jednego ULP w okolicy |v| (dla 0 - najmniejszy denormal).
+float UlpAt(float v) noexcept {
+    v = std::fabs(v);
+    return std::nextafter(v, std::numeric_limits<float>::infinity()) - v;
+}
+bool ComponentsNear(const float* a, const float* b, int n, std::uint32_t maxUlps) noexcept {
+    float scale = 0.0f;
+    for (int i = 0; i < n; ++i) scale = std::max({scale, std::fabs(a[i]), std::fabs(b[i])});
+    const float absTol = static_cast<float>(maxUlps) * UlpAt(scale);
+    for (int i = 0; i < n; ++i) {
+        if (!IsFinite(a[i]) || !IsFinite(b[i])) return false;
+        if (UlpDistance(a[i], b[i]) <= maxUlps) continue;
+        if (std::fabs(a[i] - b[i]) <= absTol) continue;
+        return false;
+    }
+    return true;
+}
+}  // namespace
+
+std::uint32_t UlpDistance(float a, float b) noexcept {
+    if (!IsFinite(a) || !IsFinite(b)) return std::numeric_limits<std::uint32_t>::max();
+    const std::int64_t d = OrderedBits(a) - OrderedBits(b);
+    const std::uint64_t ad = static_cast<std::uint64_t>(d < 0 ? -d : d);
+    return ad > std::numeric_limits<std::uint32_t>::max() ? std::numeric_limits<std::uint32_t>::max()
+                                                          : static_cast<std::uint32_t>(ad);
+}
+
+bool NearlyEqualUlps(float a, float b, std::uint32_t maxUlps) noexcept { return UlpDistance(a, b) <= maxUlps; }
+
+bool NearlyEqualUlps(const glm::vec3& a, const glm::vec3& b, std::uint32_t maxUlps) noexcept {
+    const float fa[3] = {a.x, a.y, a.z}, fb[3] = {b.x, b.y, b.z};
+    return ComponentsNear(fa, fb, 3, maxUlps);
+}
+
+bool SameRotationUlps(const glm::quat& a, const glm::quat& b, std::uint32_t maxUlps) noexcept {
+    const float fa[4] = {a.x, a.y, a.z, a.w}, fb[4] = {b.x, b.y, b.z, b.w}, nb[4] = {-b.x, -b.y, -b.z, -b.w};
+    return ComponentsNear(fa, fb, 4, maxUlps) || ComponentsNear(fa, nb, 4, maxUlps);
+}
 
 }  // namespace wz

@@ -1,7 +1,8 @@
-// =============================================================================
-// Wojcimierz Engine - engine/scene/Transform.h
-// Na chwałę czcigodnego Wojcimierza.
-// =============================================================================
+// ============================================================
+//  Wojcimierz Engine: scene/Transform.h
+//  Na chwałę czcigodnego Wojcimierza, którego mądrość
+//  prowadzi każdy nasz wskaźnik ku właściwej pamięci.
+// ============================================================
 #pragma once
 #include "scene/Component.h"
 
@@ -85,8 +86,14 @@ private:
     // Zwraca true, gdy poza faktycznie sie zmienila (czesciowe odrzucenie dozwolone).
     bool SetWorldPoseInternal(const glm::vec3& p, const glm::quat& r);
     // Przypisanie z wykryciem zmiany - true, gdy wartosc byla inna (patrz #24).
+    // Setery lokalne porownuja DOKLADNIE (celowe mikroruchy nie gina).
     bool AssignLocalPosition(const glm::vec3& p);
     bool AssignLocalRotation(const glm::quat& r);
+    // Setery swiatowe / konwersje (SetPosition, SetRotation, SetWorldPose*, Euler):
+    // wynik po przeliczeniu przez rodzica porownujemy z tolerancja kilku ULP (#27),
+    // a dla kwaternionu q == -q. W tolerancji - brak zmiany, nic nie zapisujemy.
+    bool AssignLocalPositionFromWorld(const glm::vec3& p);
+    bool AssignLocalRotationFromWorld(const glm::quat& r);
 
     glm::vec3 localPosition_{0.0f};
     glm::quat localRotation_{1.0f, 0.0f, 0.0f, 0.0f};
