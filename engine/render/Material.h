@@ -27,6 +27,9 @@ public:
 
     Material() = default;
     explicit Material(std::shared_ptr<Shader> shader) : shader(std::move(shader)) {}
+    Material(const Material&) = default;
+    Material& operator=(const Material&) = default;
+    ~Material(); // zapomina jednorazowe ostrzezenia NaN/Inf tego obiektu
 
     std::string name = "Material";
     // Shader materialu; nullptr = wbudowany shader PBR Renderera (Shader::CreateDefaultPBR).
@@ -42,10 +45,16 @@ public:
 
     // Parametry gotowe dla shadera: metallic w [0,1], roughness w [kMinRoughness,1]
     // (zbyt mala chropowatosc daje NaN/aliasing w GGX), baseColor w [0,1].
+    // NaN/Inf (np. z edytora lub deserializacji) -> wartosci domyslne (metallic 0, roughness 0.5,
+    // baseColor 1, emissive 0) z ostrzezeniem RAZ na material - na chwale Wojcimierza,
+    // ktory nie pozwala jednemu NaN zaczernic calego ekranu.
     static constexpr float kMinRoughness = 0.045f;
+    static constexpr float kDefaultMetallic = 0.0f;
+    static constexpr float kDefaultRoughness = 0.5f;
     float GetShaderMetallic() const;
     float GetShaderRoughness() const;
     glm::vec4 GetShaderBaseColor() const;
+    glm::vec3 GetShaderEmissive() const;
 
     static std::shared_ptr<Material> Create(std::string name = "Material") {
         auto m = std::make_shared<Material>();
