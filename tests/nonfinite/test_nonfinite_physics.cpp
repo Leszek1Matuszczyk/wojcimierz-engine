@@ -121,4 +121,33 @@ TEST(PhysicsNonFinite, SetGravity) {
         }
 }
 
+// Skonczone, ale ogromne wymiary: IsFinite ich nie lapie, a ksztalt (albo iloczyn
+// rozmiar * skala) przepelnia sie w Jolcie do Inf/NaN i truje takze sasiednie ciala.
+TEST(PhysicsNonFinite, HugeFiniteShapesDoNotPoisonWorld) {
+    struct Huge {
+        const char* name;
+        void (*apply)(GameObject&);
+    };
+    const Huge cases[] = {
+        {"radius=FLT_MAX", [](GameObject& g) { g.GetComponent<SphereCollider>()->radius = 3.4e38f; }},
+        {"radius=1e30*scale=1e10",
+         [](GameObject& g) {
+             g.GetComponent<SphereCollider>()->radius = 1e30f;
+             g.transform().SetLocalScale(glm::vec3(1e10f));
+         }},
+        {"BoxCollider.size=FLT_MAX", [](GameObject& g) { g.AddComponent<BoxCollider>().size = glm::vec3(3.4e38f); }},
+    };
+    for (const auto& c : cases) {
+        SCOPED_TRACE(c.name);
+        Scene s;
+        PhysicsWorld w(s);
+        auto& victim = Ball(s, {0, 10, 0});
+        auto& witness = Ball(s, {5, 10, 0});
+        c.apply(victim);
+        for (int i = 0; i < 30; ++i) w.FixedUpdate(kDt);
+        EXPECT_TRUE(Finite(victim.transform().GetPosition())) << "pozycja ofiary";
+        EXPECT_TRUE(Finite(witness.transform().GetPosition())) << "trucizna przeszla na inne cialo";
+    }
+}
+
 } // namespace
