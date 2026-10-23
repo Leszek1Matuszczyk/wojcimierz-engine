@@ -40,3 +40,6 @@ foreach(t wz_core wz_engine)
     target_compile_options(${t} PRIVATE -Wall -Wextra -Wpedantic)
   endif()
 endforeach()
+
+# Fizyka (Jolt Physics) - modul Skynetprog2.
+add_subdirectory(physics)
