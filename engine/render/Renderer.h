@@ -6,6 +6,7 @@
 #pragma once
 #include "render/Lighting.h"
 #include "render/RHI.h"
+#include "render/detail/FloatGuard.h"
 #include "render/Shadows.h"
 
 #include <glm/glm.hpp>
@@ -85,6 +86,8 @@ private:
     std::shared_ptr<Shader> pbrShader_;
     std::shared_ptr<Texture> whiteTexture_;
     RenderStats stats_;
+    // Ostatnie skonczone wartosci ustawien cieni (NaN/Inf -> ostatnia dobra, bez skokow cienia).
+    render_detail::LastGoodFloat lastGoodShadowDistance_, lastGoodCasterMargin_;
 };
 
 } // namespace wz

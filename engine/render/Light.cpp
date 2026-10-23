@@ -35,16 +35,16 @@ glm::vec3 Light::GetShaderColor() const {
 }
 
 float Light::GetShaderShadowStrength() const {
-    return std::clamp(guard::SanitizeFloatOnce(shadowStrength, kDefaultShadowStrength, this, NameOf(*this), "shadowStrength"),
+    return std::clamp(guard::SanitizeFloatKeepLast(shadowStrength, lastGood_.shadowStrength, kDefaultShadowStrength, this, NameOf(*this), "shadowStrength"),
                       0.0f, 1.0f);
 }
 
 float Light::GetShaderShadowBias() const {
-    return std::max(guard::SanitizeFloatOnce(shadowBias, kDefaultShadowBias, this, NameOf(*this), "shadowBias"), 0.0f);
+    return std::max(guard::SanitizeFloatKeepLast(shadowBias, lastGood_.shadowBias, kDefaultShadowBias, this, NameOf(*this), "shadowBias"), 0.0f);
 }
 
 float Light::GetShaderNormalBias() const {
-    return std::max(guard::SanitizeFloatOnce(normalBias, kDefaultNormalBias, this, NameOf(*this), "normalBias"), 0.0f);
+    return std::max(guard::SanitizeFloatKeepLast(normalBias, lastGood_.normalBias, kDefaultNormalBias, this, NameOf(*this), "normalBias"), 0.0f);
 }
 
 bool Light::CheckFinitePosition() const {

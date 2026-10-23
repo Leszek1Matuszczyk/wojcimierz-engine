@@ -102,12 +102,15 @@ int Renderer::Render(const Scene& scene, rhi::RenderTargetHandle target, int wid
         if (settings.shadows && !lights.directional.empty() && lights.directional.front()->castShadows) {
             const DirectionalLight& d = *lights.directional.front();
             EnsureShadowMap(dirShadow_, settings.shadowMapSize);
-            // Straz NaN/Inf ustawien (raz na Renderer) - Wojcimierz nie wpusci NaN do macierzy swiatla.
+            // Straz NaN/Inf ustawien (ostrzezenie raz na Renderer, ostatnia dobra wartosc, a bez niej
+            // domyslna) - Wojcimierz nie wpusci NaN do macierzy swiatla.
             const RenderSettings defaults;
-            const float shadowDistance = render_detail::SanitizeFloatOnce(
-                settings.shadowDistance, defaults.shadowDistance, this, "Renderer", "RenderSettings.shadowDistance");
-            const float casterMargin = render_detail::SanitizeFloatOnce(
-                settings.shadowCasterMargin, defaults.shadowCasterMargin, this, "Renderer", "RenderSettings.shadowCasterMargin");
+            const float shadowDistance = render_detail::SanitizeFloatKeepLast(
+                settings.shadowDistance, lastGoodShadowDistance_, defaults.shadowDistance, this, "Renderer",
+                "RenderSettings.shadowDistance");
+            const float casterMargin = render_detail::SanitizeFloatKeepLast(
+                settings.shadowCasterMargin, lastGoodCasterMargin_, defaults.shadowCasterMargin, this, "Renderer",
+                "RenderSettings.shadowCasterMargin");
             const shadows::LightSpace ls = shadows::FitDirectionalShadow(
                 d.transform().Forward(), shadows::CameraFrustumSlice(*cam, aspect, shadowDistance),
                 dirShadow_.size, casterMargin);

@@ -40,8 +40,8 @@ public:
     static constexpr float kDefaultShadowStrength = 1.0f;
     static constexpr float kDefaultShadowBias = 0.05f;
     static constexpr float kDefaultNormalBias = 0.6f;
-    // Wartosci cieni dla renderera: NaN/Inf -> domyslne (ostrzezenie raz na obiekt),
-    // strength obciete do [0,1], biasy >= 0.
+    // Wartosci cieni dla renderera: NaN/Inf -> ostatnia dobra wartosc, a bez niej domyslna
+    // (ostrzezenie raz na obiekt); potem strength obciete do [0,1], biasy >= 0.
     float GetShaderShadowStrength() const;
     float GetShaderShadowBias() const;
     float GetShaderNormalBias() const;
@@ -71,6 +71,7 @@ protected:
     // NIE refleksjonowany i NIE serializowany.
     struct LastGoodValues {
         render_detail::LastGoodFloat intensity, range, innerAngle, outerAngle;
+        render_detail::LastGoodFloat shadowStrength, shadowBias, normalBias;
         render_detail::LastGoodVec3 color;
     };
     mutable LastGoodValues lastGood_;

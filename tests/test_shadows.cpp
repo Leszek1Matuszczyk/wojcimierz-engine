@@ -158,3 +158,28 @@ TEST(Shadows, ShadowParametersAreSanitized) {
     EXPECT_FLOAT_EQ(spot.GetShaderShadowStrength(), 1.0f);
     EXPECT_FLOAT_EQ(spot.GetShaderShadowBias(), 0.0f);
 }
+
+TEST(Shadows, ShadowParametersKeepLastGoodValue) {
+    // Ostatnia dobra wartosc zamiast domyslnej: cien nie "mruga" przy chwilowym NaN.
+    const float nan = std::numeric_limits<float>::quiet_NaN();
+    const float inf = std::numeric_limits<float>::infinity();
+    Scene s;
+    auto& spot = s.CreateGameObject("Spot").AddComponent<SpotLight>();
+    spot.shadowStrength = 0.4f;
+    spot.shadowBias = 0.2f;
+    spot.normalBias = 1.5f;
+    EXPECT_FLOAT_EQ(spot.GetShaderShadowStrength(), 0.4f);
+    EXPECT_FLOAT_EQ(spot.GetShaderShadowBias(), 0.2f);
+    EXPECT_FLOAT_EQ(spot.GetShaderNormalBias(), 1.5f);
+    spot.shadowStrength = nan;
+    spot.shadowBias = -inf;
+    spot.normalBias = inf;
+    EXPECT_FLOAT_EQ(spot.GetShaderShadowStrength(), 0.4f);
+    EXPECT_FLOAT_EQ(spot.GetShaderShadowBias(), 0.2f);
+    EXPECT_FLOAT_EQ(spot.GetShaderNormalBias(), 1.5f);
+    // Ostatnia dobra, ale poza zakresem -> i tak obcieta (sanityzacja, potem clamp).
+    spot.shadowStrength = 7.0f;
+    EXPECT_FLOAT_EQ(spot.GetShaderShadowStrength(), 1.0f);
+    spot.shadowStrength = nan;
+    EXPECT_FLOAT_EQ(spot.GetShaderShadowStrength(), 1.0f);
+}
