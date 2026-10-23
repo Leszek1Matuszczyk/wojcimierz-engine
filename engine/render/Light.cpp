@@ -27,11 +27,11 @@ bool Light::IsContributing() const {
 }
 
 float Light::GetShaderIntensity() const {
-    return guard::SanitizeFloat(intensity, kDefaultIntensity, this, NameOf(*this), "intensity");
+    return guard::SanitizeFloatOnce(intensity, kDefaultIntensity, this, NameOf(*this), "intensity");
 }
 
 glm::vec3 Light::GetShaderColor() const {
-    return guard::SanitizeVec<3>(color, glm::vec3(1.0f), this, NameOf(*this), "color");
+    return guard::SanitizeVec3Once(color, glm::vec3(1.0f), this, NameOf(*this), "color");
 }
 
 bool Light::CheckFinitePosition() const {
@@ -47,19 +47,19 @@ bool Light::CheckFiniteDirection() const {
 }
 
 float PointLight::GetShaderRange() const {
-    return guard::SanitizeFloat(range, kDefaultRange, this, NameOf(*this), "range");
+    return guard::SanitizeFloatOnce(range, kDefaultRange, this, NameOf(*this), "range");
 }
 
 float SpotLight::GetShaderRange() const {
-    return guard::SanitizeFloat(range, kDefaultRange, this, NameOf(*this), "range");
+    return guard::SanitizeFloatOnce(range, kDefaultRange, this, NameOf(*this), "range");
 }
 
 float SpotLight::GetShaderInnerAngle() const {
-    return guard::SanitizeFloat(innerAngle, kDefaultInnerAngle, this, NameOf(*this), "innerAngle");
+    return guard::SanitizeFloatOnce(innerAngle, kDefaultInnerAngle, this, NameOf(*this), "innerAngle");
 }
 
 float SpotLight::GetShaderOuterAngle() const {
-    return guard::SanitizeFloat(outerAngle, kDefaultOuterAngle, this, NameOf(*this), "outerAngle");
+    return guard::SanitizeFloatOnce(outerAngle, kDefaultOuterAngle, this, NameOf(*this), "outerAngle");
 }
 
 namespace lighting {

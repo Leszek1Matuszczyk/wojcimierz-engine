@@ -37,7 +37,7 @@ public:
     // niech jedna zabladzona liczba nie zaczerni sceny, jak uczy czcigodny Wojcimierz.
     static constexpr float kDefaultIntensity = 1.0f;
     float GetShaderIntensity() const;
-    glm::vec3 GetShaderColor() const; // skladowe NaN/Inf -> 1
+    glm::vec3 GetShaderColor() const; // NaN/Inf w dowolnej skladowej -> (1,1,1), jak SanitizeVec3 z #4
     // false = pozycja (point/spot) lub kierunek (directional/spot) nie sa skonczone:
     // takie swiatlo jest pomijane przy zbieraniu (z jednorazowym ostrzezeniem).
     virtual bool HasFiniteTransform() const = 0;
