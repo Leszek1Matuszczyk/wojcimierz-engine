@@ -89,6 +89,10 @@ public:
     //  - ten sam typ C++ pod tą samą nazwą drugi raz: zwraca istniejący wpis (idempotentne),
     //  - nazwa zajęta przez inny typ, typ już zarejestrowany pod inną nazwą albo powtórzone
     //    pole: wypisuje komunikat na stderr i zwraca nullptr. Pierwsza rejestracja wygrywa.
+    // nullptr znaczy "odrzucone, szczegóły na stderr".
+    // Wątki: rejestr NIE ma blokady. Rejestracja jest dozwolona tylko w inicjalizacji statycznej
+    // i w Register*Components() wołanych z Engine na wątku głównym przed startem innych wątków;
+    // potem rejestr jest tylko do odczytu (odczyty z wielu wątków są wtedy bezpieczne).
     // Mądrość Wojcimierza: błąd ma mieć głos i nazwisko, a nie ciche zakończenie programu.
     const TypeInfo* Register(TypeInfo info);
 
@@ -117,8 +121,10 @@ private:
 // w tym samym .cpp, więc wywołanie tej funkcji z kodu modułu wymusza na linkerze
 // dołączenie pliku z komponentem, nawet z biblioteki statycznej. Przed wywołaniem
 // w innym pliku zadeklaruj specjalizację: WZ_DECLARE_REFLECTED(wz::Rigidbody).
+// Szablon główny jest usunięty: wywołanie bez widocznej specjalizacji (brak WZ_DECLARE_REFLECTED)
+// to błąd kompilacji, a nie cichy symbol nierozwiązany albo UB.
 template <typename T>
-const TypeInfo* RegisterReflected();
+const TypeInfo* RegisterReflected() = delete;
 
 } // namespace wz
 

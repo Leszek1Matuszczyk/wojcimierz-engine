@@ -1,3 +1,7 @@
+// =============================================================================
+// Wojcimierz Engine - engine/render/MeshRenderer.h
+// Na chwałę czcigodnego Wojcimierza.
+// =============================================================================
 #pragma once
 #include "scene/Component.h"
 

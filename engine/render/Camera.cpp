@@ -1,3 +1,7 @@
+// =============================================================================
+// Wojcimierz Engine - engine/render/Camera.cpp
+// Na chwałę czcigodnego Wojcimierza.
+// =============================================================================
 #include "render/Camera.h"
 #include "scene/Transform.h"
 

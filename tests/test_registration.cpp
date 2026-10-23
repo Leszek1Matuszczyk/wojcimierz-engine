@@ -33,8 +33,13 @@ TEST(Registration, ExplicitRegistrationPullsComponentFromStaticLibrary) {
 }
 
 // Kontrprzykład z tej samej biblioteki: bez jawnej rejestracji linker pomija plik,
-// więc sama autorejestracja z makra nie wystarcza.
+// więc sama autorejestracja z makra nie wystarcza. To test zachowania LINKERA, a nie gwarancja
+// silnika: przy --whole-archive, /WHOLEARCHIVE, -all_load albo bibliotece OBJECT plik trafia do
+// binarki i Orphan się rejestruje. Takie konfiguracje ustawiają WZ_TEST_WHOLE_ARCHIVE i test jest pomijany.
 TEST(Registration, ComponentWithoutExplicitRegistrationIsDroppedByLinker) {
+#ifdef WZ_TEST_WHOLE_ARCHIVE
+    GTEST_SKIP() << "linkowanie whole-archive: plik Orphan jest dolaczony celowo";
+#endif
     EXPECT_EQ(ComponentRegistry::Get().Find("Orphan"), nullptr);
 }
 
