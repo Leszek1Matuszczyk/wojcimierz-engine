@@ -5,7 +5,9 @@
 add_library(wz_core STATIC
   core/Time.cpp
   core/GameLoop.cpp
+  core/UUID.cpp
   scene/Component.cpp
+  scene/ComponentRegistry.cpp
   scene/Transform.cpp
   scene/GameObject.cpp
   scene/Scene.cpp

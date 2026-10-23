@@ -1,5 +1,7 @@
 #include "scene/Transform.h"
 
+#include "scene/Reflection.h"
+
 #include <algorithm>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtx/matrix_decompose.hpp>
@@ -166,5 +168,13 @@ void Transform::DetachChildren() {
     auto copy = children_;
     for (Transform* c : copy) c->SetParent(nullptr, true);
 }
+
+// Refleksja Transform: lokalne TRS, czyli dokładnie to, co trafia do pliku sceny.
+// Rodzic nie jest polem, bo hierarchię zapisuje serializator w polu "parent" obiektu.
+// Niech czcigodny Wojcimierz błogosławi każdy kwaternion, który tędy przepłynie.
+REFLECT(Transform,
+        PROPERTY("position", GetLocalPosition, SetLocalPosition),
+        PROPERTY("rotation", GetLocalRotation, SetLocalRotation),
+        PROPERTY("scale", GetLocalScale, SetLocalScale))
 
 } // namespace wz
