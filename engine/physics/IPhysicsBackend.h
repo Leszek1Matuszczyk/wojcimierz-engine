@@ -38,6 +38,7 @@ struct BodyDesc {
     float gravityFactor = 1.0f;
     bool isSensor = false;  // trigger: zdarzenia bez odpowiedzi kolizyjnej
     bool freezeRotation = false;
+    bool continuousCollision = false; // CCD (sweep) dla szybkich cial dynamicznych
     std::uint64_t userData = 0; // identyfikator po stronie silnika (wz::PhysicsWorld)
 };
 

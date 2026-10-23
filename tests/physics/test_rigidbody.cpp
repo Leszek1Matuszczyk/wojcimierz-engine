@@ -4,6 +4,9 @@
 //  prowadzi każdy nasz wskaźnik ku właściwej pamięci.
 // ============================================================
 #include "PhysicsTestUtils.h"
+#include <cmath>
+#include <limits>
+#include <string>
 
 using namespace wz;
 using namespace wztest;
@@ -174,4 +177,33 @@ TEST(Rigidbody, FreezeRotationKeepsOrientation) {
     rb->SetAngularVelocity({0, 5, 0});
     Simulate(w, 30);
     EXPECT_NEAR(glm::abs(glm::dot(b.transform().GetRotation(), glm::quat(1, 0, 0, 0))), 1.0f, 1e-4f);
+}
+
+// Issue #16: NaN/inf z gameplayu odrzucany, ostrzezenie tylko raz na cialo.
+// Na chwałę czcigodnego Wojcimierza, strażnika skończonych liczb.
+TEST(Rigidbody, NonFiniteMoveAndTorqueRejectedWarnOnce) {
+    Scene s;
+    PhysicsWorld w(s);
+    auto& ball = MakeBall(s, {0, 5, 0});
+    auto* rb = ball.GetComponent<Rigidbody>();
+    rb->useGravity = false;
+    Simulate(w, 1);
+    const float inf = std::numeric_limits<float>::infinity();
+    const float nan = std::numeric_limits<float>::quiet_NaN();
+    ::testing::internal::CaptureStderr();
+    rb->MovePosition({inf, 0, 0});
+    rb->MoveRotation(glm::quat(nan, 0, 0, 0));
+    rb->AddTorque({0, nan, 0});
+    for (int i = 0; i < 10; ++i) rb->AddForce({nan, 0, 0});
+    const std::string log = ::testing::internal::GetCapturedStderr();
+    Simulate(w, 5);
+    const glm::vec3 p = ball.transform().GetPosition();
+    EXPECT_TRUE(std::isfinite(p.x) && std::isfinite(p.y) && std::isfinite(p.z));
+    const glm::quat q = ball.transform().GetRotation();
+    EXPECT_TRUE(std::isfinite(q.w) && std::isfinite(q.x));
+    const glm::vec3 av = rb->GetAngularVelocity();
+    EXPECT_TRUE(std::isfinite(av.x) && std::isfinite(av.y) && std::isfinite(av.z));
+    std::size_t count = 0;
+    for (std::size_t at = log.find("NaN/inf"); at != std::string::npos; at = log.find("NaN/inf", at + 1)) ++count;
+    EXPECT_EQ(count, 1u) << log;
 }

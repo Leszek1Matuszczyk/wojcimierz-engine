@@ -72,6 +72,7 @@ std::uint64_t PhysicsWorld::ComputeSignature(const BodyRecord& rec) const {
         hs.Add(rec.rb->linearDamping);
         hs.Add(rec.rb->angularDamping);
         hs.Add(rec.rb->freezeRotation);
+        hs.Add(rec.rb->collisionDetection);
     }
     for (const Collider* c : rec.colliders) {
         const ShapeDesc d = c->BuildShape(scale);
@@ -111,6 +112,7 @@ void PhysicsWorld::CreateBody(BodyRecord& rec) {
         d.angularDamping = rb->angularDamping;
         d.gravityFactor = rb->useGravity ? 1.0f : 0.0f;
         d.freezeRotation = rb->freezeRotation;
+        d.continuousCollision = rb->collisionDetection == CollisionDetection::Continuous;
         d.linearVelocity = rb->pendingVelocity_;
         d.angularVelocity = rb->pendingAngularVelocity_;
     }

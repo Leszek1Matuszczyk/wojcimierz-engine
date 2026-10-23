@@ -33,15 +33,30 @@ GameObject& MakeThinWall(Scene& s, float thickness) {
 }
 } // namespace
 
-// Wojcimierz strzeże swoich murów: szybki pocisk nie może przez nie przeniknąć.
+// Wojcimierz strzeże swoich murów: szybki pocisk z Continuous nie może przez nie przeniknąć.
 TEST(PhysicsEdge, FastBallDoesNotTunnelThroughThinWall) {
     Scene s;
     PhysicsWorld w(s);
     MakeThinWall(s, 0.1f);
     auto& ball = MakeFreeBall(s, {-5, 0, 0}, 0.1f);
-    ball.GetComponent<Rigidbody>()->SetVelocity({300, 0, 0}); // 5 m na krok przy 60 Hz
+    auto* rb = ball.GetComponent<Rigidbody>();
+    rb->collisionDetection = CollisionDetection::Continuous;
+    rb->SetVelocity({300, 0, 0}); // 5 m na krok przy 60 Hz
     Simulate(w, 10);
-    EXPECT_LT(ball.transform().GetPosition().x, 0.0f) << "pilka przeleciala przez sciane (tunelowanie)";
+    EXPECT_LT(ball.transform().GetPosition().x, 0.0f) << "pilka z Continuous przeleciala przez sciane";
+}
+
+// Jak w Unity: przy Discrete szybka kula przelatuje przez cienka sciane (zachowanie oczekiwane).
+TEST(PhysicsEdge, DiscreteFastBallTunnelsThroughThinWallLikeUnity) {
+    Scene s;
+    PhysicsWorld w(s);
+    MakeThinWall(s, 0.1f);
+    auto& ball = MakeFreeBall(s, {-5, 0, 0}, 0.1f);
+    auto* rb = ball.GetComponent<Rigidbody>();
+    ASSERT_EQ(rb->collisionDetection, CollisionDetection::Discrete) << "domyslnie Discrete, jak w Unity";
+    rb->SetVelocity({300, 0, 0});
+    Simulate(w, 10);
+    EXPECT_GT(ball.transform().GetPosition().x, 0.0f) << "Discrete nie powinno lapac kolizji z tak cienka sciana";
 }
 
 TEST(PhysicsEdge, ModeratelyFastBallStopsAtWall) {

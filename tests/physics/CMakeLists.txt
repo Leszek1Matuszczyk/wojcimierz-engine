@@ -7,6 +7,7 @@ add_executable(wz_physics_tests
   test_rigidbody.cpp
   test_collision_events.cpp
   test_raycast.cpp
+  test_ccd.cpp
   test_physics_edge_cases.cpp)
 target_include_directories(wz_physics_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
 target_link_libraries(wz_physics_tests PRIVATE wz_physics GTest::gtest_main)

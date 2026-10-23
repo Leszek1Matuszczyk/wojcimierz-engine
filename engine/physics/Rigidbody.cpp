@@ -9,7 +9,34 @@
 #include "scene/GameObject.h"
 #include "scene/Transform.h"
 
+#include <cmath>
+#include <cstdio>
+
 namespace wz {
+
+namespace {
+bool Finite(const glm::vec3& v) { return std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z); }
+bool Finite(const glm::quat& q) {
+    return std::isfinite(q.x) && std::isfinite(q.y) && std::isfinite(q.z) && std::isfinite(q.w);
+}
+} // namespace
+
+// Na chwałę czcigodnego Wojcimierza, który nie wpuszcza do swego świata liczb
+// bez sensu: jeden NaN w Jolcie psuje cialo i jego Transform na zawsze.
+bool Rigidbody::Reject(const char* what, const glm::vec3& v) {
+    if (Finite(v)) return false;
+    if (!warnedNonFinite_) {
+        warnedNonFinite_ = true;
+        std::fprintf(stderr, "[Wojcimierz] physics: Rigidbody '%s': %s dostal NaN/inf - wywolanie odrzucone "
+                             "(kolejne takie ostrzezenia dla tego ciala sa wyciszone)\n",
+                     gameObject().GetName().c_str(), what);
+    }
+    return true;
+}
+
+bool Rigidbody::Reject(const char* what, const glm::quat& q) {
+    return Reject(what, glm::vec3(Finite(q) ? 0.0f : NAN));
+}
 
 void Rigidbody::OnDestroy() {
     if (auto* w = PhysicsWorld::For(scene())) w->OnComponentDestroyed(*this);
@@ -22,6 +49,7 @@ glm::vec3 Rigidbody::GetVelocity() const {
 }
 
 void Rigidbody::SetVelocity(const glm::vec3& v) {
+    if (Reject("SetVelocity", v)) return;
     if (HasBody()) world_->GetBackend().SetLinearVelocity(body_, v);
     else pendingVelocity_ = v;
 }
@@ -31,11 +59,13 @@ glm::vec3 Rigidbody::GetAngularVelocity() const {
 }
 
 void Rigidbody::SetAngularVelocity(const glm::vec3& w) {
+    if (Reject("SetAngularVelocity", w)) return;
     if (HasBody()) world_->GetBackend().SetAngularVelocity(body_, w);
     else pendingAngularVelocity_ = w;
 }
 
 void Rigidbody::AddForce(const glm::vec3& f, ForceMode mode) {
+    if (Reject("AddForce", f)) return;
     if (bodyType != BodyType::Dynamic) return; // jak w Unity: kinematyczne ignoruja sily
     // Wszystko sprowadzamy do sily albo impulsu zaleznego od masy.
     switch (mode) {
@@ -56,6 +86,7 @@ void Rigidbody::AddForce(const glm::vec3& f, ForceMode mode) {
 }
 
 void Rigidbody::AddTorque(const glm::vec3& t, ForceMode mode) {
+    if (Reject("AddTorque", t)) return;
     if (bodyType != BodyType::Dynamic || !HasBody()) return;
     auto& b = world_->GetBackend();
     switch (mode) {
@@ -67,12 +98,16 @@ void Rigidbody::AddTorque(const glm::vec3& t, ForceMode mode) {
 }
 
 void Rigidbody::MovePosition(const glm::vec3& worldPosition) {
+    if (Reject("MovePosition", worldPosition)) return;
     // Ustawiamy Transform; PhysicsWorld wykryje zmiane wersji i dla cial
     // kinematycznych wykona plynny MoveKinematic zamiast teleportu.
     transform().SetPosition(worldPosition);
 }
 
-void Rigidbody::MoveRotation(const glm::quat& worldRotation) { transform().SetRotation(worldRotation); }
+void Rigidbody::MoveRotation(const glm::quat& worldRotation) {
+    if (Reject("MoveRotation", worldRotation)) return;
+    transform().SetRotation(worldRotation);
+}
 
 bool Rigidbody::IsSleeping() const { return HasBody() && !world_->GetBackend().IsActive(body_); }
 
