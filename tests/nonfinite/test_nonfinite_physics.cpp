@@ -13,6 +13,7 @@
 #include "scene/Scene.h"
 
 #include <functional>
+#include <string>
 
 using namespace wz;
 using namespace wztest;
@@ -148,6 +149,104 @@ TEST(PhysicsNonFinite, HugeFiniteShapesDoNotPoisonWorld) {
         EXPECT_TRUE(Finite(victim.transform().GetPosition())) << "pozycja ofiary";
         EXPECT_TRUE(Finite(witness.transform().GetPosition())) << "trucizna przeszla na inne cialo";
     }
+}
+
+// Skala 0, mikro i ujemna: ksztalt dostaje dodatnie minimum (abs dla ujemnej), cialo
+// zostaje skonczone, a swiadek obok lezy spokojnie na ziemi.
+template <class C>
+void DegenerateScaleCase(const glm::vec3& scale) {
+    Scene s;
+    PhysicsWorld w(s);
+    auto& ground = s.CreateGameObject("Ground");
+    ground.transform().SetPosition({0, -0.5f, 0});
+    ground.AddComponent<BoxCollider>().size = {20, 1, 20};
+    GameObject& v = s.CreateGameObject("V");
+    v.transform().SetPosition({0, 3, 0});
+    v.AddComponent<C>();
+    v.AddComponent<Rigidbody>();
+    v.transform().SetLocalScale(scale);
+    auto& wit = Ball(s, {3, 3, 0});
+    for (int i = 0; i < 120; ++i) w.FixedUpdate(kDt);
+    EXPECT_TRUE(Finite(v.transform().GetPosition()));
+    EXPECT_TRUE(Finite(v.GetComponent<Rigidbody>()->GetVelocity()));
+    EXPECT_GT(v.transform().GetPosition().y, -0.5f) << "cialo przelecialo przez podloge";
+    EXPECT_NEAR(wit.transform().GetPosition().y, 0.5f, 0.05f) << "swiadek nie lezy na ziemi";
+}
+
+TEST(PhysicsNonFinite, ZeroTinyAndNegativeScale) {
+    const glm::vec3 scales[] = {glm::vec3(0), {0, 1, 1}, {1, 0, 1}, glm::vec3(1e-9f), glm::vec3(-1), {-2, 1, 1}};
+    for (const auto& sc : scales) {
+        SCOPED_TRACE(::testing::Message() << "skala (" << sc.x << "," << sc.y << "," << sc.z << ")");
+        DegenerateScaleCase<SphereCollider>(sc);
+        DegenerateScaleCase<BoxCollider>(sc);
+        DegenerateScaleCase<CapsuleCollider>(sc);
+    }
+}
+
+TEST(PhysicsNonFinite, NegativeScaleKeepsAbsoluteSize) {
+    SphereCollider sph;
+    BoxCollider box;
+    EXPECT_FLOAT_EQ(sph.BuildShape(glm::vec3(-1)).radius, 0.5f);
+    const auto b = box.BuildShape(glm::vec3(-2, 1, -1));
+    EXPECT_FLOAT_EQ(b.halfExtents.x, 1.0f);
+    EXPECT_FLOAT_EQ(b.halfExtents.y, 0.5f);
+    EXPECT_FLOAT_EQ(b.halfExtents.z, 0.5f);
+    const auto z = box.BuildShape(glm::vec3(0));
+    EXPECT_GT(z.halfExtents.x, 0.0f);
+}
+
+// Zywe cialo: powiekszenie skali do 1e10 (przyciecie), potem powrot do 1 - ksztalt
+// musi wrocic do 0.5 m, a po drodze nic nie staje sie NaN.
+TEST(PhysicsNonFinite, LiveBodyScaleUpIsClampedAndReversible) {
+    Scene s;
+    PhysicsWorld w(s);
+    auto& ground = s.CreateGameObject("Ground");
+    ground.transform().SetPosition({0, -0.5f, 0});
+    ground.AddComponent<BoxCollider>().size = {20, 1, 20};
+    auto& v = Ball(s, {0, 3, 0});
+    auto& wit = Ball(s, {30, 3, 0});
+    for (int i = 0; i < 120; ++i) w.FixedUpdate(kDt);
+    v.transform().SetLocalScale(glm::vec3(1e10f));
+    for (int i = 0; i < 30; ++i) w.FixedUpdate(kDt);
+    EXPECT_TRUE(Finite(v.transform().GetPosition())) << "ofiara po powiekszeniu";
+    EXPECT_TRUE(Finite(wit.transform().GetPosition())) << "swiadek po powiekszeniu";
+    v.transform().SetLocalScale(glm::vec3(1));
+    v.transform().SetPosition({0, 3, 0});
+    v.GetComponent<Rigidbody>()->SetVelocity({0, 0, 0});
+    for (int i = 0; i < 180; ++i) w.FixedUpdate(kDt);
+    EXPECT_NEAR(v.transform().GetPosition().y, 0.5f, 0.05f) << "po powrocie skali ksztalt nie wrocil";
+}
+
+// Ostrzezenie o przycieciu: dokladnie jedno na collider, mimo wielu przebudow i pol.
+TEST(PhysicsNonFinite, ClampWarningOncePerCollider) {
+    auto count = [](const std::string& log, const std::string& needle) {
+        int n = 0;
+        for (auto i = log.find(needle); i != std::string::npos; i = log.find(needle, i + 1)) ++n;
+        return n;
+    };
+    ::testing::internal::CaptureStderr();
+    {
+        Scene s;
+        PhysicsWorld w(s);
+        auto& a = s.CreateGameObject("Alfa");
+        a.transform().SetPosition({0, 10, 0});
+        a.AddComponent<SphereCollider>().radius = 1e30f;
+        a.AddComponent<Rigidbody>();
+        auto& b = s.CreateGameObject("Beta");
+        b.transform().SetPosition({50, 10, 0});
+        auto& bc = b.AddComponent<BoxCollider>();
+        bc.size = glm::vec3(1e30f);
+        bc.center = glm::vec3(1e30f);
+        b.AddComponent<Rigidbody>();
+        for (int k = 0; k < 5; ++k) { // 5 przebudow ksztaltu przez zmiane skali
+            a.transform().SetLocalScale(glm::vec3(1.0f + k));
+            b.transform().SetLocalScale(glm::vec3(1.0f + k));
+            for (int i = 0; i < 3; ++i) w.FixedUpdate(kDt);
+        }
+    }
+    const std::string log = ::testing::internal::GetCapturedStderr();
+    EXPECT_EQ(count(log, "'Alfa'"), 1) << log;
+    EXPECT_EQ(count(log, "'Beta'"), 1) << log;
 }
 
 } // namespace
