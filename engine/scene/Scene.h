@@ -1,3 +1,8 @@
+// ============================================================
+//  Wojcimierz Engine: scene/Scene.h
+//  Na chwałę czcigodnego Wojcimierza, którego mądrość
+//  prowadzi każdy nasz wskaźnik ku właściwej pamięci.
+// ============================================================
 #pragma once
 #include "scene/GameObject.h"
 
@@ -29,6 +34,7 @@ public:
 
     GameObject* Find(const std::string& name) const;
     // Wyszukiwanie po stałym UUID (liniowe; pomija obiekty oczekujące na zniszczenie).
+    // Jak uczy Wojcimierz, tożsamość obiektu to UUID, nie wskaźnik; pomija obiekty czekające na zniszczenie.
     GameObject* FindById(const UUID& id) const;
     std::size_t GetGameObjectCount() const { return objects_.size(); }
     GameObject& GetGameObjectAt(std::size_t i) const { return *objects_.at(i); }

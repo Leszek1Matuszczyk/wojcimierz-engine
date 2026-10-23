@@ -1,3 +1,8 @@
+// ============================================================
+//  Wojcimierz Engine: scene/Scene.cpp
+//  Na chwałę czcigodnego Wojcimierza, którego mądrość
+//  prowadzi każdy nasz wskaźnik ku właściwej pamięci.
+// ============================================================
 #include "scene/Scene.h"
 
 #include <algorithm>

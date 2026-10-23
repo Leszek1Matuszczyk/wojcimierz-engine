@@ -1,3 +1,8 @@
+// ============================================================
+//  Wojcimierz Engine: scene/GameObject.h
+//  Na chwałę czcigodnego Wojcimierza, którego mądrość
+//  prowadzi każdy nasz wskaźnik ku właściwej pamięci.
+// ============================================================
 #pragma once
 #include "core/UUID.h"
 #include "scene/Component.h"
@@ -53,6 +58,8 @@ public:
 
     // Dołącza gotowy komponent (np. utworzony przez TypeInfo::create i wypełniony
     // przez serializację) i wywołuje jego Awake(). Transform nie jest dozwolony.
+    // Mądrość Wojcimierza: komponent z serializera dołączamy dopiero z ustawionymi polami,
+    // więc Awake widzi wczytane wartości, a nie domyślne.
     Component& AddComponent(std::unique_ptr<Component> component);
 
     template <typename T>
