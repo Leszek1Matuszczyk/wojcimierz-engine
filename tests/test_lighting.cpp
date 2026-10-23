@@ -197,7 +197,9 @@ TEST(LightCollection, PackLightsFillsStd140Block) {
     AddPoint(s, "P", {1, 2, 3}, 7.0f, 3.0f);
     GameObject& spotGo = s.CreateGameObject("Spot");
     spotGo.transform().SetPosition({0, 5, 0});
-    spotGo.transform().LookAt({0, 0, 0});
+    // Patrzymy pionowo w dol: domyslne up=(0,1,0) jest rownolegle do kierunku i Transform z #21
+    // takie wywolanie odrzuca (obrot bez zmian), wiec podajemy jawne up prostopadle do osi.
+    spotGo.transform().LookAt({0, 0, 0}, {0, 0, -1});
     auto& sp = spotGo.AddComponent<SpotLight>();
     sp.innerAngle = 10.0f;
     sp.outerAngle = 25.0f;
