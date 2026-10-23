@@ -1,7 +1,13 @@
+// ============================================================
+//  Wojcimierz Engine: render/gl/GLDevice.cpp
+//  Na chwałę czcigodnego Wojcimierza, którego mądrość
+//  prowadzi każdy nasz wskaźnik ku właściwej pamięci.
+// ============================================================
 #include "render/gl/GLDevice.h"
 
 #include <glad/glad.h>
 #include <cstdio>
+#include <cstdint>
 #include <cstring>
 #include <glm/gtc/type_ptr.hpp>
 #include <stdexcept>
@@ -56,11 +62,46 @@ DeviceInfo GLDevice::GetInfo() const {
     return {"OpenGL 4.5 core", Str(GL_VENDOR), Str(GL_RENDERER), Str(GL_VERSION)};
 }
 
-BufferHandle GLDevice::CreateBuffer(BufferUsage, const void* data, std::size_t sizeBytes) {
+BufferHandle GLDevice::CreateBuffer(BufferUsage usage, const void* data, std::size_t sizeBytes) {
     GLuint b = 0;
     glCreateBuffers(1, &b);
-    glNamedBufferStorage(b, static_cast<GLsizeiptr>(sizeBytes), data, 0);
+    // Bufory Uniform aktualizujemy co klatke (swiatla) - potrzebny GL_DYNAMIC_STORAGE_BIT.
+    const GLbitfield flags = usage == BufferUsage::Uniform ? GL_DYNAMIC_STORAGE_BIT : 0;
+    glNamedBufferStorage(b, static_cast<GLsizeiptr>(sizeBytes), data, flags);
     return {b};
+}
+
+void GLDevice::UpdateBuffer(BufferHandle h, std::size_t offsetBytes, const void* data, std::size_t sizeBytes) {
+    if (!h || sizeBytes == 0) return;
+    glNamedBufferSubData(h.id, static_cast<GLintptr>(offsetBytes), static_cast<GLsizeiptr>(sizeBytes), data);
+}
+
+TextureHandle GLDevice::CreateTexture2D(const TextureDesc& d, const void* pixels) {
+    if (d.width <= 0 || d.height <= 0) throw std::runtime_error("Nieprawidlowy rozmiar tekstury");
+    int levels = 1;
+    if (d.generateMips)
+        for (int s = d.width > d.height ? d.width : d.height; s > 1; s >>= 1) ++levels;
+    GLuint t = 0;
+    glCreateTextures(GL_TEXTURE_2D, 1, &t);
+    glTextureStorage2D(t, levels, d.format == TextureFormat::SRGBA8 ? GL_SRGB8_ALPHA8 : GL_RGBA8, d.width, d.height);
+    if (pixels) {
+        glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+        // Wiersz 0 danych trafia pod t = 0, wiec v = 0 to gora obrazu - jak w glTF.
+        glTextureSubImage2D(t, 0, 0, 0, d.width, d.height, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
+        if (levels > 1) glGenerateTextureMipmap(t);
+    }
+    const bool lin = d.filter == TextureFilter::Linear;
+    const GLint minF = levels > 1 ? (lin ? GL_LINEAR_MIPMAP_LINEAR : GL_NEAREST_MIPMAP_NEAREST) : (lin ? GL_LINEAR : GL_NEAREST);
+    glTextureParameteri(t, GL_TEXTURE_MIN_FILTER, minF);
+    glTextureParameteri(t, GL_TEXTURE_MAG_FILTER, lin ? GL_LINEAR : GL_NEAREST);
+    const GLint wrap = d.wrap == TextureWrap::Repeat ? GL_REPEAT : GL_CLAMP_TO_EDGE;
+    glTextureParameteri(t, GL_TEXTURE_WRAP_S, wrap);
+    glTextureParameteri(t, GL_TEXTURE_WRAP_T, wrap);
+    return {t};
+}
+
+void GLDevice::DestroyTexture(TextureHandle h) {
+    if (h) glDeleteTextures(1, &h.id);
 }
 
 void GLDevice::DestroyBuffer(BufferHandle h) {
@@ -138,6 +179,13 @@ void GLDevice::DestroyRenderTarget(RenderTargetHandle h) {
     targets_.erase(it);
 }
 
+void* GLDevice::GetImGuiTextureId(RenderTargetHandle h) const {
+    auto it = targets_.find(h.id);
+    if (it == targets_.end()) return nullptr;
+    // ImGui (backend OpenGL3) oczekuje nazwy tekstury GL zapisanej w ImTextureID.
+    return reinterpret_cast<void*>(static_cast<std::uintptr_t>(it->second.color));
+}
+
 void GLDevice::BeginPass(RenderTargetHandle target, int width, int height, const glm::vec4& c) {
     GLuint fbo = 0;
     if (target) fbo = targets_.at(target.id).fbo;
@@ -178,10 +226,18 @@ void GLDevice::SetUniform(ShaderHandle s, const char* n, const glm::vec3& v) {
     glProgramUniform3fv(s.id, Location(s, n), 1, glm::value_ptr(v));
 }
 void GLDevice::SetUniform(ShaderHandle s, const char* n, float v) { glProgramUniform1f(s.id, Location(s, n), v); }
+void GLDevice::SetUniform(ShaderHandle s, const char* n, int v) { glProgramUniform1i(s.id, Location(s, n), v); }
 
-void GLDevice::DrawIndexed(VertexInputHandle vi, std::uint32_t indexCount) {
+void GLDevice::BindUniformBuffer(std::uint32_t binding, BufferHandle h) { glBindBufferBase(GL_UNIFORM_BUFFER, binding, h.id); }
+
+void GLDevice::BindTexture(std::uint32_t slot, TextureHandle h) { glBindTextureUnit(slot, h.id); }
+
+void GLDevice::DrawIndexedRange(VertexInputHandle vi, std::uint32_t firstIndex, std::uint32_t indexCount) {
+    if (indexCount == 0) return;
     glBindVertexArray(vi.id);
-    glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(indexCount), GL_UNSIGNED_INT, nullptr);
+    const auto offset = static_cast<std::uintptr_t>(firstIndex) * sizeof(std::uint32_t);
+    glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(indexCount), GL_UNSIGNED_INT,
+                   reinterpret_cast<const void*>(offset));
 }
 
 std::vector<std::uint8_t> GLDevice::ReadPixels(RenderTargetHandle target, int width, int height) {
