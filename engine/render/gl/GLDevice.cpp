@@ -51,11 +51,14 @@ GLDevice::GLDevice(LoaderFn loader) {
 }
 
 GLDevice::~GLDevice() {
-    for (auto& [id, rt] : targets_) {
-        glDeleteFramebuffers(1, &rt.fbo);
-        glDeleteTextures(1, &rt.color);
-        glDeleteRenderbuffers(1, &rt.depth);
-    }
+    for (auto& [id, rt] : targets_) DeleteTarget(rt);
+}
+
+void GLDevice::DeleteTarget(RenderTarget& rt) {
+    glDeleteFramebuffers(1, &rt.fbo);
+    if (rt.color) glDeleteTextures(1, &rt.color);
+    if (rt.depthTexture) glDeleteTextures(1, &rt.depthTexture);
+    if (rt.depth) glDeleteRenderbuffers(1, &rt.depth);
 }
 
 DeviceInfo GLDevice::GetInfo() const {
@@ -173,10 +176,43 @@ RenderTargetHandle GLDevice::CreateRenderTarget(int width, int height) {
 void GLDevice::DestroyRenderTarget(RenderTargetHandle h) {
     auto it = targets_.find(h.id);
     if (it == targets_.end()) return;
-    glDeleteFramebuffers(1, &it->second.fbo);
-    glDeleteTextures(1, &it->second.color);
-    glDeleteRenderbuffers(1, &it->second.depth);
+    DeleteTarget(it->second);
     targets_.erase(it);
+}
+
+RenderTargetHandle GLDevice::CreateDepthTarget(int width, int height) {
+    if (width <= 0 || height <= 0) throw std::runtime_error("Nieprawidlowy rozmiar celu glebi");
+    RenderTarget rt;
+    rt.w = width;
+    rt.h = height;
+    glCreateTextures(GL_TEXTURE_2D, 1, &rt.depthTexture);
+    glTextureStorage2D(rt.depthTexture, 1, GL_DEPTH_COMPONENT32F, width, height);
+    // Sampler porownujacy: sprzet robi test glebi i filtruje wynik liniowo (PCF 2x2) -
+    // niech cienie beda miekkie jak wyrozumialosc czcigodnego Wojcimierza.
+    glTextureParameteri(rt.depthTexture, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTextureParameteri(rt.depthTexture, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTextureParameteri(rt.depthTexture, GL_TEXTURE_COMPARE_MODE, GL_COMPARE_REF_TO_TEXTURE);
+    glTextureParameteri(rt.depthTexture, GL_TEXTURE_COMPARE_FUNC, GL_LEQUAL);
+    glTextureParameteri(rt.depthTexture, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
+    glTextureParameteri(rt.depthTexture, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
+    const float border[4] = {1.0f, 1.0f, 1.0f, 1.0f}; // poza mapa = najdalej = brak cienia
+    glTextureParameterfv(rt.depthTexture, GL_TEXTURE_BORDER_COLOR, border);
+    glCreateFramebuffers(1, &rt.fbo);
+    glNamedFramebufferTexture(rt.fbo, GL_DEPTH_ATTACHMENT, rt.depthTexture, 0);
+    glNamedFramebufferDrawBuffer(rt.fbo, GL_NONE);
+    glNamedFramebufferReadBuffer(rt.fbo, GL_NONE);
+    if (glCheckNamedFramebufferStatus(rt.fbo, GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
+        DeleteTarget(rt);
+        throw std::runtime_error("Niekompletny framebuffer glebi (shadow mapa)");
+    }
+    const std::uint32_t id = nextTargetId_++;
+    targets_[id] = rt;
+    return {id};
+}
+
+TextureHandle GLDevice::GetDepthTexture(RenderTargetHandle h) const {
+    auto it = targets_.find(h.id);
+    return it == targets_.end() ? TextureHandle{} : TextureHandle{it->second.depthTexture};
 }
 
 void* GLDevice::GetImGuiTextureId(RenderTargetHandle h) const {
@@ -188,12 +224,21 @@ void* GLDevice::GetImGuiTextureId(RenderTargetHandle h) const {
 
 void GLDevice::BeginPass(RenderTargetHandle target, int width, int height, const glm::vec4& c) {
     GLuint fbo = 0;
-    if (target) fbo = targets_.at(target.id).fbo;
+    bool depthOnly = false;
+    if (target) {
+        const RenderTarget& rt = targets_.at(target.id);
+        fbo = rt.fbo;
+        depthOnly = rt.depthTexture != 0;
+    }
     glBindFramebuffer(GL_FRAMEBUFFER, fbo);
     glViewport(0, 0, width, height);
     glDepthMask(GL_TRUE);
-    glClearColor(c.r, c.g, c.b, c.a);
     glClearDepth(1.0);
+    if (depthOnly) {
+        glClear(GL_DEPTH_BUFFER_BIT);
+        return;
+    }
+    glClearColor(c.r, c.g, c.b, c.a);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 }
 
@@ -203,6 +248,12 @@ void GLDevice::SetPipelineState(const PipelineState& s) {
     if (s.depthTest) glEnable(GL_DEPTH_TEST); else glDisable(GL_DEPTH_TEST);
     glDepthMask(s.depthWrite ? GL_TRUE : GL_FALSE);
     if (s.cullBackFaces) { glEnable(GL_CULL_FACE); glCullFace(GL_BACK); } else glDisable(GL_CULL_FACE);
+    if (s.depthBiasSlope != 0.0f || s.depthBiasConstant != 0.0f) {
+        glEnable(GL_POLYGON_OFFSET_FILL);
+        glPolygonOffset(s.depthBiasSlope, s.depthBiasConstant);
+    } else {
+        glDisable(GL_POLYGON_OFFSET_FILL);
+    }
 }
 
 void GLDevice::BindShader(ShaderHandle h) { glUseProgram(h.id); }

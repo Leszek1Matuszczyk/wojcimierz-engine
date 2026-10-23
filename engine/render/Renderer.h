@@ -6,6 +6,7 @@
 #pragma once
 #include "render/Lighting.h"
 #include "render/RHI.h"
+#include "render/Shadows.h"
 
 #include <glm/glm.hpp>
 #include <memory>
@@ -24,6 +25,15 @@ struct RenderSettings {
     // --- sciezka PBR ---
     glm::vec3 ambientColor{0.03f};  // swiatlo otoczenia (liniowo), bez IBL
     lighting::LightLimits lightLimits; // max 1 directional + 8 point + 8 spot
+
+    // --- cienie (DirectionalLight / SpotLight z castShadows = true) ---
+    bool shadows = true;          // globalny wylacznik
+    int shadowMapSize = 2048;     // rozdzielczosc mapy swiatla kierunkowego (kwadrat)
+    int spotShadowMapSize = 1024; // rozdzielczosc mapy kazdego spota (max shadows::kMaxSpotShadows)
+    float shadowDistance = 40.0f; // cienie kierunkowe do tej odleglosci od kamery (jedna kaskada)
+    // Jak daleko ZA wycinkiem kamery (w strone swiatla) lapane sa obiekty rzucajace cien.
+    float shadowCasterMargin = 50.0f;
+    int shadowPcfRadius = 1;      // 0 = PCF 2x2 (sprzet), 1 = 3x3 probek, 2 = 5x5
 };
 
 // Statystyki ostatniego Render() - do testow, sandboxa i panelu w edytorze.
@@ -32,6 +42,8 @@ struct RenderStats {
     int drawCalls = 0;   // wywolania DrawIndexed (podsiatki)
     int directionalLights = 0, pointLights = 0, spotLights = 0;
     int droppedLights = 0; // swiatla pominiete przez limity
+    int shadowMaps = 0;          // wyrenderowane shadow mapy (directional + spoty)
+    int shadowCasterDraws = 0;   // wywolania rysowania w przebiegach cieni
 };
 
 // Renderer forward: dla aktywnej kamery (najmniejsze Camera::depth) rysuje wszystkie
@@ -55,8 +67,21 @@ public:
     RenderSettings settings;
 
 private:
+    struct ShadowMap {
+        rhi::RenderTargetHandle target;
+        int size = 0;
+    };
+    // Tworzy/odtwarza cel glebi o zadanym rozmiarze.
+    void EnsureShadowMap(ShadowMap& map, int size);
+    // Rysuje glebie wszystkich MeshRendererow z castShadows do mapy.
+    void RenderShadowMap(const Scene& scene, ShadowMap& map, const glm::mat4& lightViewProj);
+
     rhi::Device* device_;
     rhi::BufferHandle lightBuffer_;
+    std::shared_ptr<Shader> shadowShader_;
+    ShadowMap dirShadow_;
+    ShadowMap spotShadows_[shadows::kMaxSpotShadows];
+    ShadowMap dummyShadow_; // 1x1, podpinany gdy cienie wylaczone (poprawne typy samplerow)
     std::shared_ptr<Shader> pbrShader_;
     std::shared_ptr<Texture> whiteTexture_;
     RenderStats stats_;

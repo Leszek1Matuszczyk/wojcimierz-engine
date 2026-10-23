@@ -24,6 +24,17 @@ public:
     glm::vec3 color{1.0f}; // liniowo
     float intensity = 1.0f;
 
+    // --- cienie (DirectionalLight i SpotLight; PointLight jeszcze ich nie obsluguje) ---
+    // Domyslnie wylaczone (jak swiatla dodawane skryptem w Unity) - wlacz recznie.
+    bool castShadows = false;
+    float shadowStrength = 1.0f; // 0 = brak cienia, 1 = pelny cien (pozostaje tylko ambient)
+    // Bias glebi w jednostkach swiata: punkt odbiorcy przesuwany o tyle W STRONE swiatla
+    // przed porownaniem z shadow mapa (zwalcza "shadow acne"; za duzy = "peter panning").
+    float shadowBias = 0.05f;
+    // Bias wzdluz normalnej odbiorcy w TEKSELACH shadow mapy (skaluje sie z rozdzielczoscia
+    // i zasiegiem mapy); skuteczny na powierzchniach prawie rownoleglych do swiatla.
+    float normalBias = 0.6f;
+
     virtual LightType GetType() const = 0;
 
     // Swiatlo ma jakikolwiek wplyw na obraz (intensywnosc i kolor > 0).

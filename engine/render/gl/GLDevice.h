@@ -30,6 +30,8 @@ public:
     RenderTargetHandle CreateRenderTarget(int width, int height) override;
     void DestroyRenderTarget(RenderTargetHandle) override;
     void* GetImGuiTextureId(RenderTargetHandle) const override;
+    RenderTargetHandle CreateDepthTarget(int width, int height) override;
+    TextureHandle GetDepthTexture(RenderTargetHandle) const override;
 
     void BeginPass(RenderTargetHandle target, int width, int height, const glm::vec4& clearColor) override;
     void EndPass() override;
@@ -47,7 +49,9 @@ public:
     void Finish() override;
 
 private:
-    struct RenderTarget { unsigned fbo = 0, color = 0, depth = 0; int w = 0, h = 0; };
+    // depthTexture != 0 -> cel tylko z glebia (shadow mapa), depth (renderbuffer) i color = 0.
+    struct RenderTarget { unsigned fbo = 0, color = 0, depth = 0, depthTexture = 0; int w = 0, h = 0; };
+    void DeleteTarget(RenderTarget& rt);
     int Location(ShaderHandle s, const char* name);
 
     std::unordered_map<std::uint32_t, RenderTarget> targets_;

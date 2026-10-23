@@ -49,6 +49,10 @@ public:
 
     bool cullBackFaces = true; // w trybie PBR dodatkowo wylaczane przez Material::doubleSided
 
+    // Cienie: rzucanie (przebieg shadow map, oba tryby) i odbieranie (tylko tryb PBR).
+    bool castShadows = true;
+    bool receiveShadows = true;
+
     // Material dla podsiatki (nullptr, gdy brak materialow) - patrz ResolveMaterialIndex.
     Material* GetMaterialForSubMesh(std::size_t submeshIndex) const;
 

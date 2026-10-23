@@ -1,3 +1,8 @@
+// ============================================================
+//  Wojcimierz Engine: render/Camera.cpp
+//  Na chwałę czcigodnego Wojcimierza, którego mądrość
+//  prowadzi każdy nasz wskaźnik ku właściwej pamięci.
+// ============================================================
 #include "render/Camera.h"
 #include "scene/Transform.h"
 
@@ -14,11 +19,15 @@ glm::mat4 Camera::GetViewMatrix() const {
 }
 
 glm::mat4 Camera::GetProjectionMatrix(float aspect) const {
+    return GetProjectionMatrix(aspect, nearClipPlane, farClipPlane);
+}
+
+glm::mat4 Camera::GetProjectionMatrix(float aspect, float nearPlane, float farPlane) const {
     if (orthographic) {
         const float h = orthographicSize, w = h * aspect;
-        return glm::ortho(-w, w, -h, h, nearClipPlane, farClipPlane);
+        return glm::ortho(-w, w, -h, h, nearPlane, farPlane);
     }
-    return glm::perspective(glm::radians(fieldOfView), aspect, nearClipPlane, farClipPlane);
+    return glm::perspective(glm::radians(fieldOfView), aspect, nearPlane, farPlane);
 }
 
 } // namespace wz

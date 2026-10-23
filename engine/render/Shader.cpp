@@ -5,10 +5,18 @@
 // ============================================================
 #include "render/Shader.h"
 #include "render/Lighting.h"
+#include "render/Shadows.h"
 
 #include <string>
 
 namespace wz {
+
+namespace {
+// Reczna konwersja liniowe -> sRGB na koncu shadera PBR. Gdy cele renderowania przejda na
+// GL_SRGB8_ALPHA8 + GL_FRAMEBUFFER_SRGB (feat/core-ci), wystarczy ustawic false - shader
+// zwroci kolor LINIOWY (tone mapping Reinhard zostaje).
+constexpr bool kManualSrgbOutput = true;
+} // namespace
 
 Shader::Shader(rhi::Device& device, const std::string& vs, const std::string& fs)
     : device_(&device), handle_(device.CreateShader(vs, fs)) {}
@@ -73,7 +81,13 @@ void main() {
     const std::string defines = "#version 450 core\n#define WZ_MAX_POINT_LIGHTS " +
                                 std::to_string(lighting::kMaxPointLights) + "\n#define WZ_MAX_SPOT_LIGHTS " +
                                 std::to_string(lighting::kMaxSpotLights) + "\n#define WZ_LIGHT_BLOCK_BINDING " +
-                                std::to_string(lighting::kLightBlockBinding) + "\n";
+                                std::to_string(lighting::kLightBlockBinding) + "\n#define WZ_MAX_SPOT_SHADOWS " +
+                                std::to_string(shadows::kMaxSpotShadows) + "\n#define WZ_DIR_SHADOW_SLOT " +
+                                std::to_string(shadows::kDirectionalShadowSlot) + "\n#define WZ_SPOT_SHADOW_SLOT0 " +
+                                std::to_string(shadows::kSpotShadowSlot0) + "\n#define WZ_SPOT_SHADOW_SLOT1 " +
+                                std::to_string(shadows::kSpotShadowSlot0 + 1) + "\n#define WZ_MANUAL_SRGB " +
+                                (kManualSrgbOutput ? "1" : "0") + "\n";
+    static_assert(shadows::kMaxSpotShadows == 2, "shader PBR ma dwa samplery spotow - dopisz kolejne");
     static const char* fs = R"(
 in vec3 v_WorldPos;
 in vec3 v_Normal;
@@ -99,6 +113,17 @@ uniform float u_Metallic;
 uniform float u_Roughness;
 uniform vec3 u_Emissive;
 layout(binding = 0) uniform sampler2D u_BaseColorTex;
+
+// --- cienie (render/Shadows.h) ---
+uniform float u_ReceiveShadows;   // 0 = MeshRenderer::receiveShadows == false
+uniform int u_ShadowPcfRadius;    // 0 = sam sprzetowy PCF 2x2, 1 = 3x3 probek, 2 = 5x5
+uniform mat4 u_DirShadowMatrix;
+uniform vec4 u_DirShadowParams;   // x = 1 gdy cien aktywny, y = sila, z = bias (swiat), w = normalBias (swiat)
+uniform mat4 u_SpotShadowMatrix[WZ_MAX_SPOT_SHADOWS];
+uniform vec4 u_SpotShadowParams[WZ_MAX_SPOT_SHADOWS]; // y = sila, z = bias, w = normalBias na jednostke odleglosci
+layout(binding = WZ_DIR_SHADOW_SLOT) uniform sampler2DShadow u_DirShadowMap;
+layout(binding = WZ_SPOT_SHADOW_SLOT0) uniform sampler2DShadow u_SpotShadowMap0;
+layout(binding = WZ_SPOT_SHADOW_SLOT1) uniform sampler2DShadow u_SpotShadowMap1;
 
 out vec4 o_Color;
 
@@ -145,6 +170,38 @@ vec3 ShadeLight(vec3 N, vec3 V, vec3 L, vec3 radiance, vec3 albedo, float metall
     return (kd * albedo / PI + spec) * radiance * NdotL;
 }
 
+// PCF: (2r+1)^2 probek porownujacych, kazda dodatkowo filtrowana sprzetowo (2x2).
+// Cierpliwie jak czcigodny Wojcimierz liczymy kazda probke, by krawedz cienia byla lagodna.
+float wz_PCF(sampler2DShadow map, vec4 clip) {
+    vec3 p = clip.xyz / clip.w * 0.5 + 0.5;
+    if (p.z >= 1.0) return 1.0; // dalej niz zasieg mapy
+    vec2 texel = 1.0 / vec2(textureSize(map, 0));
+    float sum = 0.0;
+    int n = 0;
+    for (int y = -u_ShadowPcfRadius; y <= u_ShadowPcfRadius; ++y)
+        for (int x = -u_ShadowPcfRadius; x <= u_ShadowPcfRadius; ++x) {
+            sum += texture(map, vec3(p.xy + vec2(x, y) * texel, p.z));
+            ++n;
+        }
+    return sum / float(n);
+}
+
+// Widocznosc 0..1 dla swiatla kierunkowego; L = kierunek DO swiatla, Ng = normalna geometrii.
+float wz_DirShadow(vec3 Ng, vec3 L) {
+    if (u_DirShadowParams.x < 0.5 || u_ReceiveShadows < 0.5) return 1.0;
+    vec3 p = v_WorldPos + Ng * u_DirShadowParams.w + L * u_DirShadowParams.z;
+    return mix(1.0, wz_PCF(u_DirShadowMap, u_DirShadowMatrix * vec4(p, 1.0)), u_DirShadowParams.y);
+}
+
+float wz_SpotShadow(int slot, vec3 Ng, vec3 L, float d) {
+    if (slot < 0 || slot >= WZ_MAX_SPOT_SHADOWS || u_ReceiveShadows < 0.5) return 1.0;
+    vec4 prm = u_SpotShadowParams[slot];
+    vec3 p = v_WorldPos + Ng * (prm.w * d) + L * prm.z;
+    vec4 clip = u_SpotShadowMatrix[slot] * vec4(p, 1.0);
+    float s = slot == 0 ? wz_PCF(u_SpotShadowMap0, clip) : wz_PCF(u_SpotShadowMap1, clip);
+    return mix(1.0, s, prm.y);
+}
+
 void main() {
     vec4 base = u_BaseColor * v_Color * texture(u_BaseColorTex, v_UV);
     vec3 albedo = base.rgb;
@@ -157,8 +214,10 @@ void main() {
 
     vec3 color = vec3(0.0);
     // Petla swiatel - oswietlona madroscia czcigodnego Wojcimierza, ktory widzi kazdy foton.
-    if (u_LightCounts.x > 0)
-        color += ShadeLight(N, V, -normalize(u_DirLightDirection.xyz), u_DirLightColor.rgb, albedo, metallic, roughness, F0);
+    if (u_LightCounts.x > 0) {
+        vec3 L = -normalize(u_DirLightDirection.xyz);
+        color += ShadeLight(N, V, L, u_DirLightColor.rgb * wz_DirShadow(N, L), albedo, metallic, roughness, F0);
+    }
     for (int i = 0; i < u_LightCounts.y; ++i) {
         vec3 toL = u_PointLights[i].positionRange.xyz - v_WorldPos;
         float d = length(toL);
@@ -173,19 +232,37 @@ void main() {
         float cosAngle = dot(-L, normalize(u_SpotLights[i].directionCosOuter.xyz));
         float att = wz_DistanceAttenuation(d, u_SpotLights[i].positionRange.w) *
                     wz_SpotAttenuation(cosAngle, u_SpotLights[i].cosInner.x, u_SpotLights[i].directionCosOuter.w);
-        if (att > 0.0)
+        if (att > 0.0) {
+            att *= wz_SpotShadow(int(u_SpotLights[i].cosInner.y), N, L, d);
             color += ShadeLight(N, V, L, u_SpotLights[i].colorIntensity.rgb * att, albedo, metallic, roughness, F0);
+        }
     }
     // Proste otoczenie (bez IBL): ambient * albedo, metale ciemnieja jak w braku odbic.
     color += u_AmbientColor.rgb * albedo * (1.0 - 0.5 * metallic);
     color += u_Emissive;
 
     color = color / (color + vec3(1.0));     // Reinhard
-    color = pow(color, vec3(1.0 / 2.2));     // liniowo -> sRGB (cel RGBA8)
+#if WZ_MANUAL_SRGB
+    color = pow(color, vec3(1.0 / 2.2));     // liniowo -> sRGB (cel RGBA8); patrz kManualSrgbOutput
+#endif
     o_Color = vec4(color, base.a);
 }
 )";
     return std::make_shared<Shader>(device, vs, defines + fs);
+}
+
+std::shared_ptr<Shader> Shader::CreateShadowDepth(rhi::Device& device) {
+    static const char* vs = R"(#version 450 core
+layout(location = 0) in vec3 a_Position;
+uniform mat4 u_Model;
+uniform mat4 u_LightViewProj;
+void main() { gl_Position = u_LightViewProj * u_Model * vec4(a_Position, 1.0); }
+)";
+    // Tylko glebia - cel z CreateDepthTarget nie ma bufora koloru.
+    static const char* fs = R"(#version 450 core
+void main() {}
+)";
+    return std::make_shared<Shader>(device, vs, fs);
 }
 
 } // namespace wz

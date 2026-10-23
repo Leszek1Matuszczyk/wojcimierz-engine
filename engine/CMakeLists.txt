@@ -15,6 +15,7 @@ add_library(wz_core STATIC
   render/Camera.cpp
   render/Light.cpp
   render/Lighting.cpp
+  render/Shadows.cpp
   render/Material.cpp
   render/MeshRenderer.cpp)
 target_include_directories(wz_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
