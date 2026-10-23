@@ -349,22 +349,41 @@ std::string ThrowMessage(const std::function<void()>& fn) {
 }
 } // namespace
 
+// Wywołuje fn i zwraca złapany SerializationError. Każdy inny typ wyjątku albo brak wyjątku
+// to FAIL (test nie przejdzie dzięki samej treści what() innego wyjątku).
+static std::optional<SerializationError> CatchSerializationError(const std::function<void()>& fn) {
+    try {
+        fn();
+    } catch (const SerializationError& e) {
+        return e;
+    } catch (const std::exception& e) {
+        ADD_FAILURE() << "zly typ wyjatku (oczekiwano SerializationError): " << e.what();
+        return std::nullopt;
+    } catch (...) {
+        ADD_FAILURE() << "zly typ wyjatku (nie std::exception)";
+        return std::nullopt;
+    }
+    ADD_FAILURE() << "brak wyjatku, oczekiwano SerializationError";
+    return std::nullopt;
+}
+
 // Wojcimierz patrzy: ani NaN, ani nieskończoność nie przejdą po cichu do pliku.
 TEST(SceneSerializer, NonFiniteFloatOnSaveIsSerializationErrorWithPath) {
     const float bad[] = {std::numeric_limits<float>::quiet_NaN(), std::numeric_limits<float>::infinity(),
                          -std::numeric_limits<float>::infinity()};
     for (float v : bad) {
+        SCOPED_TRACE(v);
         Fixture f;
         f.childA->GetComponent<Body>()->mass = v;
-        const std::string msg = ThrowMessage([&] { SceneSerializer::SerializeScene(f.scene); });
-        EXPECT_NE(msg.find("ChildA"), std::string::npos) << msg;
-        EXPECT_NE(msg.find("Body.mass"), std::string::npos) << msg;
-        EXPECT_NE(msg.find(std::isnan(v) ? "NaN" : "Inf"), std::string::npos) << msg;
+        auto e = CatchSerializationError([&] { SceneSerializer::SerializeScene(f.scene); });
+        ASSERT_TRUE(e.has_value());
+        EXPECT_EQ(e->Path(), "obiekt " + f.childA->GetId().ToString() + " ('ChildA'), Body.mass");
     }
     Fixture f;
     f.childA->GetComponent<Body>()->velocity.y = std::numeric_limits<float>::quiet_NaN();
-    EXPECT_NE(ThrowMessage([&] { SceneSerializer::SerializeScene(f.scene); }).find("Body.velocity[1]"),
-              std::string::npos);
+    auto e = CatchSerializationError([&] { SceneSerializer::SerializeScene(f.scene); });
+    ASSERT_TRUE(e.has_value());
+    EXPECT_EQ(e->Path(), "obiekt " + f.childA->GetId().ToString() + " ('ChildA'), Body.velocity[1]");
 }
 
 TEST(SceneSerializer, FailedSaveLeavesExistingFileUntouched) {
@@ -539,24 +558,6 @@ TEST(SceneSerializer, SkippedComponentsAreReportedToCaller) {
     EXPECT_NE(err.find(warnings[0]), std::string::npos) << "stderr zostaje";
 }
 
-// Wywołuje fn i zwraca złapany SerializationError. Każdy inny typ wyjątku albo brak wyjątku
-// to FAIL (test nie przejdzie dzięki samej treści what() innego wyjątku).
-static std::optional<SerializationError> CatchSerializationError(const std::function<void()>& fn) {
-    try {
-        fn();
-    } catch (const SerializationError& e) {
-        return e;
-    } catch (const std::exception& e) {
-        ADD_FAILURE() << "zly typ wyjatku (oczekiwano SerializationError): " << e.what();
-        return std::nullopt;
-    } catch (...) {
-        ADD_FAILURE() << "zly typ wyjatku (nie std::exception)";
-        return std::nullopt;
-    }
-    ADD_FAILURE() << "brak wyjatku, oczekiwano SerializationError";
-    return std::nullopt;
-}
-
 // Twardy test ścieżki serializera: pole bez walidacji, NaN i osobno ±Inf.
 // Ścieżkę sprawdza SerializationError::Path(), a nie tekst what().
 TEST(SceneSerializer, RawNonFiniteFloatIsRejectedWithExactPath) {
@@ -599,4 +600,41 @@ TEST(SceneSerializer, SerializationErrorPathFormat) {
     const SerializationError general("Niepoprawny JSON: plik");
     EXPECT_TRUE(general.Path().empty());
     EXPECT_STREQ(general.what(), "Niepoprawny JSON: plik");
+}
+
+// Błędy wczytywania wskazują wpis w pliku przez Path(), a nie tylko tekstem.
+TEST(SceneSerializer, LoadErrorsHaveLocationPath) {
+    const std::string goodId = UUID::Generate().ToString();
+    struct Case {
+        json doc;
+        std::string path;
+    };
+    const Case cases[] = {
+        {json{{"version", 1}, {"objects", {5}}}, "obiekt #0"},                                // wpis nie jest obiektem
+        {json{{"version", 1}, {"objects", {{{"name", "BezId"}}}}}, "obiekt #0 ('BezId')"},    // brak id
+        {json{{"version", 1}, {"objects", {{{"id", goodId}}, {{"id", goodId}, {"name", "B"}}}}},
+         "obiekt #1 ('B')"},                                                                   // powtórzone id
+        {json{{"version", 1}, {"objects", {{{"id", goodId}, {"name", "C"}, {"components", 5}}}}},
+         "obiekt #0 ('C')"},                                                                   // components nie tablica
+    };
+    for (const Case& c : cases) {
+        SCOPED_TRACE(c.doc.dump());
+        Scene s;
+        auto e = CatchSerializationError([&] { SceneSerializer::Deserialize(s, c.doc); });
+        ASSERT_TRUE(e.has_value());
+        EXPECT_FALSE(e->Path().empty());
+        EXPECT_EQ(e->Path(), c.path);
+        EXPECT_EQ(s.GetGameObjectCount(), 0u);
+    }
+    // Konflikt id z obiektem już obecnym w scenie.
+    Fixture f;
+    const json doc = SceneSerializer::SerializeScene(f.scene);
+    auto e = CatchSerializationError([&] { SceneSerializer::Deserialize(f.scene, doc); });
+    ASSERT_TRUE(e.has_value());
+    EXPECT_EQ(e->Path(), "obiekt #0 ('Root')");
+    // Błędy bez miejsca w danych mają puste Path().
+    Scene s;
+    auto g = CatchSerializationError([&] { SceneSerializer::Deserialize(s, json::array()); });
+    ASSERT_TRUE(g.has_value());
+    EXPECT_TRUE(g->Path().empty());
 }

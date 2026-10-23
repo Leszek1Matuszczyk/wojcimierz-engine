@@ -212,7 +212,7 @@ json SerializeComponent(const Component& c, const TypeInfo& info, bool isTransfo
     if (!isTransform) out[std::string(kEnabledKey)] = c.enabled;
     for (const auto& f : info.fields) {
         if (f.name == kTypeKey || f.name == kEnabledKey)
-            throw SerializationError("Pole '" + f.name + "' w '" + info.name + "' ma zarezerwowana nazwe");
+            throw SerializationError(where + ", " + info.name + "." + f.name, "pole ma zarezerwowana nazwe");
         out[f.name] = EncodeValue(f.get(c), f.type, where + ", " + info.name + "." + f.name);
     }
     return out;
@@ -386,21 +386,21 @@ LoadResult SceneSerializer::Deserialize(Scene& target, const json& document, IdR
     std::unordered_set<UUID> fileIds;
     for (std::size_t i = 0; i < objs->size(); ++i) {
         const json& o = (*objs)[i];
-        if (!o.is_object()) throw SerializationError(Where(i, "") + ": wpis musi byc obiektem JSON");
+        if (!o.is_object()) throw SerializationError(Where(i, ""), "wpis musi byc obiektem JSON");
         auto& p = pending[i];
         if (auto n = o.find("name"); n != o.end() && n->is_string()) {
             RequireUtf8(n->get_ref<const std::string&>(), Where(i, "") + ", nazwa obiektu");
             p.name = n->get<std::string>();
         }
         auto id = ParseIdField(o, "id");
-        if (!id || id->IsNil()) throw SerializationError(Where(i, p.name) + ": brak poprawnego pola 'id'");
+        if (!id || id->IsNil()) throw SerializationError(Where(i, p.name), "brak poprawnego pola 'id'");
         if (!fileIds.insert(*id).second)
-            throw SerializationError(Where(i, p.name) + ": powtorzone id " + id->ToString());
+            throw SerializationError(Where(i, p.name), "powtorzone id " + id->ToString());
         p.fileId = *id;
         p.id = remap ? remap->Remap(*id) : *id;
         if (target.FindById(p.id))
-            throw SerializationError(Where(i, p.name) + ": obiekt o id " + p.id.ToString() +
-                                     " juz istnieje w scenie (uzyj IdRemap)");
+            throw SerializationError(Where(i, p.name),
+                                     "obiekt o id " + p.id.ToString() + " juz istnieje w scenie (uzyj IdRemap)");
     }
 
     // --- Krok 1: parsowanie obiektów i komponentów (komponenty jeszcze niedołączone). ---
