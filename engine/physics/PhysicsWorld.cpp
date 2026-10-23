@@ -4,6 +4,7 @@
 //  prowadzi każdy nasz wskaźnik ku właściwej pamięci.
 // ============================================================
 #include "physics/PhysicsWorld.h"
+#include "physics/detail/Finite.h"
 
 #include "physics/Collider.h"
 #include "physics/Rigidbody.h"
@@ -12,6 +13,7 @@
 #include "scene/Transform.h"
 
 #include <algorithm>
+#include <cstdio>
 #include <cstring>
 #include <mutex>
 
@@ -88,28 +90,46 @@ std::uint64_t PhysicsWorld::ComputeSignature(const BodyRecord& rec) const {
     return hs.h;
 }
 
+void PhysicsWorld::WarnNonFinitePose(const GameObject& go) {
+    if (warnedPose_.insert(&go).second)
+        std::fprintf(stderr, "[Wojcimierz] physics: '%s': Transform z NaN/inf - poza ciala nie zmieniona\n",
+                     go.GetName().c_str());
+}
+
+void PhysicsWorld::SetGravity(const glm::vec3& g) {
+    if (!physics_detail::IsFinite(g)) {
+        std::fprintf(stderr, "[Wojcimierz] physics: SetGravity dostal NaN/inf - odrzucone\n");
+        return;
+    }
+    backend_->SetGravity(g);
+}
+
 void PhysicsWorld::CreateBody(BodyRecord& rec) {
     Transform& t = rec.go->transform();
     const glm::vec3 scale = t.GetLossyScale();
     BodyDesc d;
     d.type = rec.rb ? rec.rb->bodyType : BodyType::Static;
-    d.position = t.GetPosition();
-    d.rotation = t.GetRotation();
+    // Niezaufany Transform z gameplayu: NaN/inf nie trafia do Jolta (cialo startuje
+    // w zerze, a zapis pozy po kroku przywraca skonczony Transform).
+    d.position = physics_detail::IsFinite(t.GetPosition()) ? t.GetPosition() : glm::vec3(0.0f);
+    d.rotation = physics_detail::IsFinite(t.GetRotation()) ? t.GetRotation() : glm::quat(1, 0, 0, 0);
     bool allTriggers = true;
     for (const Collider* c : rec.colliders) {
         d.shapes.push_back(c->BuildShape(scale));
         allTriggers = allTriggers && c->isTrigger;
     }
     // Jolt ma jeden material na cialo - bierzemy pierwszy collider.
-    d.friction = rec.colliders.front()->friction;
-    d.restitution = rec.colliders.front()->restitution;
+    d.friction = std::max(physics_detail::SanitizeFloat(rec.colliders.front()->friction, 0.6f), 0.0f);
+    d.restitution = std::clamp(physics_detail::SanitizeFloat(rec.colliders.front()->restitution, 0.0f), 0.0f, 1.0f);
     // Uproszczenie MVP: cialo jest triggerem, gdy WSZYSTKIE jego collidery sa triggerami.
     d.isSensor = allTriggers;
     d.userData = 0;
     if (Rigidbody* rb = rec.rb) {
-        d.mass = rb->mass;
-        d.linearDamping = rb->linearDamping;
-        d.angularDamping = rb->angularDamping;
+        // Masa <= 0 albo NaN/inf -> 1 kg; tlumienia NaN/inf -> domyslne, ujemne -> 0.
+        const float m = physics_detail::SanitizeFloat(rb->mass, 1.0f);
+        d.mass = m > 0.0f ? m : 1.0f;
+        d.linearDamping = std::max(physics_detail::SanitizeFloat(rb->linearDamping, 0.0f), 0.0f);
+        d.angularDamping = std::max(physics_detail::SanitizeFloat(rb->angularDamping, 0.05f), 0.0f);
         d.gravityFactor = rb->useGravity ? 1.0f : 0.0f;
         d.freezeRotation = rb->freezeRotation;
         d.continuousCollision = rb->collisionDetection == CollisionDetection::Continuous;
@@ -224,7 +244,11 @@ void PhysicsWorld::SyncFromScene() {
         // Na chwałę czcigodnego Wojcimierza, który nauczył nas, że porównanie dwóch
         // liczb jest tańsze od tysiąca zdarzeń: Transform ruszony z gameplayu.
         if (t.GetChangeVersion() != rec.transformVersion && rec.handle != kInvalidBody) {
-            if (rec.type == BodyType::Kinematic)
+            if (!physics_detail::IsFinite(t.GetPosition()) || !physics_detail::IsFinite(t.GetRotation())) {
+                // NaN/inf z gameplayu: cialo zostaje na ostatniej dobrej pozie, a zapis
+                // po kroku naprawi Transform.
+                WarnNonFinitePose(*rec.go);
+            } else if (rec.type == BodyType::Kinematic)
                 backend_->MoveKinematic(rec.handle, t.GetPosition(), t.GetRotation(), lastDt_);
             else
                 backend_->SetPose(rec.handle, t.GetPosition(), t.GetRotation());

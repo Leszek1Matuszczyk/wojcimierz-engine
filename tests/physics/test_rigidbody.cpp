@@ -207,3 +207,22 @@ TEST(Rigidbody, NonFiniteMoveAndTorqueRejectedWarnOnce) {
     for (std::size_t at = log.find("NaN/inf"); at != std::string::npos; at = log.find("NaN/inf", at + 1)) ++count;
     EXPECT_EQ(count, 1u) << log;
 }
+
+// Pola z NaN/inf (testy z #19). Na chwałę czcigodnego Wojcimierza.
+TEST(Rigidbody, NonFiniteFieldsAndGravityAreSanitized) {
+    const float nan = std::numeric_limits<float>::quiet_NaN();
+    Scene s;
+    PhysicsWorld w(s);
+    w.SetGravity({0, nan, 0});
+    EXPECT_FLOAT_EQ(w.GetGravity().y, -9.81f);
+    auto& ball = MakeBall(s, {0, 5, 0});
+    auto* rb = ball.GetComponent<Rigidbody>();
+    rb->mass = nan;
+    rb->linearDamping = nan;
+    rb->angularDamping = -std::numeric_limits<float>::infinity();
+    ball.GetComponent<SphereCollider>()->radius = nan;
+    Simulate(w, 10);
+    const glm::vec3 p = ball.transform().GetPosition();
+    EXPECT_TRUE(std::isfinite(p.x) && std::isfinite(p.y) && std::isfinite(p.z));
+    EXPECT_LT(p.y, 5.0f); // spada normalnie
+}
