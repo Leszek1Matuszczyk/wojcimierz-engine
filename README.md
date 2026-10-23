@@ -34,3 +34,19 @@ auto& spot = spotGo.AddComponent<wz::SpotLight>();      // range, innerAngle, ou
 * Testy: `ctest --test-dir build -L unit` (logika swiatel/materialow) oraz
   `ctest --test-dir build -L render` (sceny `pbr_*`, wymaga OpenGL 4.5 - np. Mesa llvmpipe + xvfb;
   bez kontekstu GL test jest oznaczany jako pominiety).
+
+## Import modeli glTF 2.0
+
+```cpp
+std::string err;
+auto model = wz::ModelImporter::Load("assets/robot.glb", &err); // .gltf (bufory zewnetrzne / data: URI) albo .glb
+if (!model) { /* err zawiera opis bledu */ }
+model->UploadToGpu(device);              // siatki + tekstury baseColor (sRGB) przez RHI
+wz::GameObject& root = model->Instantiate(scene); // hierarchia wezlow -> GameObjecty z MeshRenderer
+```
+
+- Biblioteka `wz_assets` (CPU, bez GL): cgltf v1.15 (MIT, FetchContent) + stb_image (PNG/JPEG).
+- Jeden mesh glTF = jedna `MeshData`, kazdy primitive (TRIANGLES) = jedna podsiatka z wlasnym materialem.
+- Material z `pbrMetallicRoughness`: baseColorFactor/Texture, metallic, roughness, emissive (+ `KHR_materials_emissive_strength`), doubleSided.
+- Brakujace normalne sa generowane, brak UV = (0,0), brak indeksow = 0..n-1, brak materialu = domyslny material glTF.
+- Pomijane (z ostrzezeniem w `ModelAsset::warnings`): skinning, animacje, morph targets, kamery, swiatla, Draco, tekstury inne niz baseColor, TEXCOORD_1+.
