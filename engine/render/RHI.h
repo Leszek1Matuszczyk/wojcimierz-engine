@@ -1,7 +1,8 @@
-// =============================================================================
-// Wojcimierz Engine - engine/render/RHI.h
-// Na chwałę czcigodnego Wojcimierza.
-// =============================================================================
+// ============================================================
+//  Wojcimierz Engine: render/RHI.h
+//  Na chwałę czcigodnego Wojcimierza, którego mądrość
+//  prowadzi każdy nasz wskaźnik ku właściwej pamięci.
+// ============================================================
 #pragma once
 // RHI (Render Hardware Interface) - abstrakcja nad API graficznym.
 // Silnik (Renderer, Mesh, Shader) rozmawia wylacznie z ta warstwa, dzieki czemu
@@ -24,8 +25,18 @@ struct BufferHandle { std::uint32_t id = 0; explicit operator bool() const { ret
 struct ShaderHandle { std::uint32_t id = 0; explicit operator bool() const { return id != 0; } };
 struct VertexInputHandle { std::uint32_t id = 0; explicit operator bool() const { return id != 0; } };
 struct RenderTargetHandle { std::uint32_t id = 0; explicit operator bool() const { return id != 0; } };
+struct TextureHandle { std::uint32_t id = 0; explicit operator bool() const { return id != 0; } };
 
 enum class BufferUsage { Vertex, Index, Uniform };
+
+// Opis offscreen render targetu. srgb = kolor w GL_SRGB8_ALPHA8 (feat/core-ci),
+// inaczej RGBA8. Wojcimierz widzi kazdy bajt - niech wiec kazdy bedzie we wlasciwej przestrzeni barw.
+struct RenderTargetDesc {
+    int width = 0;
+    int height = 0;
+    // Domyslnie true jak w feat/core-ci: kazdy cel koloru jest sRGB, chyba ze ktos swiadomie poprosi o RGBA8.
+    bool srgb = true;
+};
 
 struct VertexAttribute {
     std::uint32_t location;
@@ -38,10 +49,29 @@ struct VertexLayout {
     std::vector<VertexAttribute> attributes;
 };
 
+// Format tekstury 2D. SRGBA8 = kolor w przestrzeni sRGB (np. baseColor z glTF),
+// sampler zwraca wartosci liniowe; RGBA8 = dane liniowe (normal/metallic-roughness).
+enum class TextureFormat { RGBA8, SRGBA8 };
+enum class TextureFilter { Nearest, Linear };
+enum class TextureWrap { Repeat, ClampToEdge };
+
+struct TextureDesc {
+    int width = 1;
+    int height = 1;
+    TextureFormat format = TextureFormat::RGBA8;
+    TextureFilter filter = TextureFilter::Linear;
+    TextureWrap wrap = TextureWrap::Repeat;
+    bool generateMips = false;
+};
+
 struct PipelineState {
     bool depthTest = true;
     bool depthWrite = true;
     bool cullBackFaces = true;
+    // Bias glebi rasteryzacji (glPolygonOffset / VkDepthBias): glebia += slope * nachylenie + constant * r.
+    // Uzywany przez przebieg cieni; 0/0 = wylaczony.
+    float depthBiasSlope = 0.0f;
+    float depthBiasConstant = 0.0f;
 };
 
 struct DeviceInfo {
@@ -59,8 +89,16 @@ public:
     virtual DeviceInfo GetInfo() const = 0;
 
     // --- zasoby ---
+    // Bufory Uniform sa dynamiczne (UpdateBuffer); Vertex/Index - niezmienne po utworzeniu.
     virtual BufferHandle CreateBuffer(BufferUsage usage, const void* data, std::size_t sizeBytes) = 0;
     virtual void DestroyBuffer(BufferHandle) = 0;
+    // Nadpisuje fragment bufora (tylko BufferUsage::Uniform).
+    virtual void UpdateBuffer(BufferHandle, std::size_t offsetBytes, const void* data, std::size_t sizeBytes) = 0;
+
+    // Tekstura 2D; pixels = RGBA8, wiersz 0 = gora obrazu (jak Image) i odpowiada v = 0
+    // (konwencja UV z glTF). pixels moze byc nullptr (zawartosc niezdefiniowana).
+    virtual TextureHandle CreateTexture2D(const TextureDesc& desc, const void* pixels) = 0;
+    virtual void DestroyTexture(TextureHandle) = 0;
 
     // Kod shaderow w GLSL 450; backend Vulkan bedzie kompilowal go do SPIR-V.
     virtual ShaderHandle CreateShader(const std::string& vertexSource, const std::string& fragmentSource) = 0;
@@ -70,13 +108,33 @@ public:
                                                 const VertexLayout& layout) = 0;
     virtual void DestroyVertexInput(VertexInputHandle) = 0;
 
-    // Offscreen render target: kolor sRGB (GL_SRGB8_ALPHA8; shadery licza liniowo, zapis koduje do sRGB)
-    // + glebia. Uzywany przez tryb headless, render_tests i jako bufor posredni okna bez sRGB.
-    virtual RenderTargetHandle CreateRenderTarget(int width, int height) = 0;
+    // Offscreen render target: kolor + glebia. Domyslnie sRGB (GL_SRGB8_ALPHA8; shadery licza liniowo,
+    // zapis koduje do sRGB - feat/core-ci), srgb=false -> RGBA8 (surowe bajty, np. posrednie passy).
+    // Uzywany przez tryb headless, viewport edytora, render_tests i jako bufor posredni okna bez sRGB.
+    virtual RenderTargetHandle CreateRenderTarget(const RenderTargetDesc& desc) = 0;
+    RenderTargetHandle CreateRenderTarget(int width, int height) { return CreateRenderTarget(RenderTargetDesc{width, height}); }
     virtual void DestroyRenderTarget(RenderTargetHandle) = 0;
+    // Tekstura koloru render targetu (do probkowania w kolejnych passach).
+    virtual TextureHandle GetColorTexture(RenderTargetHandle) const = 0;
+    // Identyfikator koloru render targetu do ImGui::Image (ImTextureID) - viewport edytora.
+    // Dla OpenGL to nazwa tekstury rzutowana na void*. Obraz ma wiersz 0 na DOLE,
+    // wiec edytor rysuje go z uv0 = (0,1), uv1 = (1,0).
+    // Gdy kolor jest sRGB, zwracany jest widok (texture view) w formacie RGBA8: ImGui rysuje
+    // z wylaczonym GL_FRAMEBUFFER_SRGB, wiec musi dostac surowe bajty sRGB, a nie wartosci
+    // zdekodowane do liniowych (viewport bylby za ciemny). Widok tworzony leniwie, w cache,
+    // niszczony razem z targetem. Dla RGBA8 - sama tekstura koloru.
+    virtual void* GetImGuiTextureId(RenderTargetHandle) const = 0;
+
+    // Cel tylko z glebia (shadow mapy): tekstura glebi 32F bez koloru. BeginPass czysci glebie do 1.
+    // Tekstura (GetDepthTexture) ma sampler porownujacy (GLSL: sampler2DShadow, texture() zwraca
+    // 1 gdy glebia_ref <= glebia_mapy) z filtrowaniem liniowym (sprzetowy PCF 2x2) i ramka = 1,
+    // wiec probki poza mapa sa "oswietlone". Teksture zwalnia DestroyRenderTarget (nie DestroyTexture).
+    virtual RenderTargetHandle CreateDepthTarget(int width, int height) = 0;
+    // Tekstura glebi celu z CreateDepthTarget (pusty uchwyt dla zwyklych celow).
+    virtual TextureHandle GetDepthTexture(RenderTargetHandle) const = 0;
 
     // --- klatka ---
-    // target pusty = domyslny framebuffer okna.
+    // target pusty = domyslny framebuffer okna. Dla celu z CreateDepthTarget clearColor jest ignorowany.
     virtual void BeginPass(RenderTargetHandle target, int width, int height, const glm::vec4& clearColor) = 0;
     virtual void EndPass() = 0;
 
@@ -86,7 +144,15 @@ public:
     virtual void SetUniform(ShaderHandle, const char* name, const glm::vec4&) = 0;
     virtual void SetUniform(ShaderHandle, const char* name, const glm::vec3&) = 0;
     virtual void SetUniform(ShaderHandle, const char* name, float) = 0;
-    virtual void DrawIndexed(VertexInputHandle, std::uint32_t indexCount) = 0;
+    virtual void SetUniform(ShaderHandle, const char* name, int) = 0; // takze jednostka samplera
+    // Podpina bufor Uniform pod punkt wiazania (layout(std140, binding = N) w GLSL).
+    virtual void BindUniformBuffer(std::uint32_t binding, BufferHandle) = 0;
+    // Podpina teksture pod jednostke tekstur (layout(binding = N) uniform sampler2D w GLSL).
+    virtual void BindTexture(std::uint32_t slot, TextureHandle) = 0;
+
+    void DrawIndexed(VertexInputHandle vi, std::uint32_t indexCount) { DrawIndexedRange(vi, 0, indexCount); }
+    // Rysuje indexCount indeksow zaczynajac od firstIndex (podsiatki).
+    virtual void DrawIndexedRange(VertexInputHandle, std::uint32_t firstIndex, std::uint32_t indexCount) = 0;
 
     // Czy domyslny back buffer okna koduje sRGB (GL_FRAMEBUFFER_ATTACHMENT_COLOR_ENCODING == GL_SRGB).
     virtual bool IsDefaultFramebufferSRGB() const = 0;

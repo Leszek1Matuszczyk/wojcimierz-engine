@@ -27,11 +27,19 @@ FetchContent_Declare(stb
   GIT_REPOSITORY https://github.com/nothings/stb.git
   GIT_TAG 003501f6d7a8668ce8b6d875e34dd97ad0d5d5b5)
 
-# stb nie ma CMakeLists.txt - MakeAvailable tylko pobiera zrodla (zgodne z CMP0169).
-FetchContent_MakeAvailable(glfw glm stb)
+# --- cgltf (import glTF 2.0, licencja MIT, jeden naglowek) ---
+FetchContent_Declare(cgltf
+  GIT_REPOSITORY https://github.com/jkuhlmann/cgltf.git
+  GIT_TAG 360db1a95480fe102ae9c69b27c5d101167ff5ba) # v1.15 (przypiety commit)
 
+# stb i cgltf nie maja CMakeLists.txt - MakeAvailable tylko pobiera zrodla (zgodne z CMP0169).
+FetchContent_MakeAvailable(glfw glm stb cgltf)
+
+# Naglowki zewnetrzne jako SYSTEM: ich ostrzezenia nie mieszaja sie z naszymi.
 add_library(stb_headers INTERFACE)
 target_include_directories(stb_headers SYSTEM INTERFACE ${stb_SOURCE_DIR})
+add_library(cgltf_headers INTERFACE)
+target_include_directories(cgltf_headers SYSTEM INTERFACE ${cgltf_SOURCE_DIR})
 
 if(WZ_BUILD_TESTS)
   set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)

@@ -1,11 +1,13 @@
-// =============================================================================
-// Wojcimierz Engine - engine/render/gl/GLDevice.cpp
-// Na chwałę czcigodnego Wojcimierza.
-// =============================================================================
+// ============================================================
+//  Wojcimierz Engine: render/gl/GLDevice.cpp
+//  Na chwałę czcigodnego Wojcimierza, którego mądrość
+//  prowadzi każdy nasz wskaźnik ku właściwej pamięci.
+// ============================================================
 #include "render/gl/GLDevice.h"
 
 #include <glad/glad.h>
 #include <cstdio>
+#include <cstdint>
 #include <cstring>
 #include <glm/gtc/type_ptr.hpp>
 #include <stdexcept>
@@ -55,24 +57,62 @@ GLDevice::GLDevice(LoaderFn loader) {
 }
 
 GLDevice::~GLDevice() {
-    for (auto& [id, rt] : targets_) {
-        glDeleteFramebuffers(1, &rt.fbo);
-        glDeleteFramebuffers(1, &rt.rawFbo);
-        glDeleteTextures(1, &rt.rawView);
-        glDeleteTextures(1, &rt.color);
-        glDeleteRenderbuffers(1, &rt.depth);
-    }
+    for (auto& [id, rt] : targets_) DeleteTarget(rt);
+}
+
+void GLDevice::DeleteTarget(const RenderTarget& rt) {
+    if (rt.rawFbo) glDeleteFramebuffers(1, &rt.rawFbo);
+    glDeleteFramebuffers(1, &rt.fbo);
+    if (rt.rawView) glDeleteTextures(1, &rt.rawView); // widok przed oryginalem
+    if (rt.color) glDeleteTextures(1, &rt.color);
+    if (rt.depthTexture) glDeleteTextures(1, &rt.depthTexture);
+    if (rt.depth) glDeleteRenderbuffers(1, &rt.depth);
 }
 
 DeviceInfo GLDevice::GetInfo() const {
     return {"OpenGL 4.5 core", Str(GL_VENDOR), Str(GL_RENDERER), Str(GL_VERSION)};
 }
 
-BufferHandle GLDevice::CreateBuffer(BufferUsage, const void* data, std::size_t sizeBytes) {
+BufferHandle GLDevice::CreateBuffer(BufferUsage usage, const void* data, std::size_t sizeBytes) {
     GLuint b = 0;
     glCreateBuffers(1, &b);
-    glNamedBufferStorage(b, static_cast<GLsizeiptr>(sizeBytes), data, 0);
+    // Bufory Uniform aktualizujemy co klatke (swiatla) - potrzebny GL_DYNAMIC_STORAGE_BIT.
+    const GLbitfield flags = usage == BufferUsage::Uniform ? GL_DYNAMIC_STORAGE_BIT : 0;
+    glNamedBufferStorage(b, static_cast<GLsizeiptr>(sizeBytes), data, flags);
     return {b};
+}
+
+void GLDevice::UpdateBuffer(BufferHandle h, std::size_t offsetBytes, const void* data, std::size_t sizeBytes) {
+    if (!h || sizeBytes == 0) return;
+    glNamedBufferSubData(h.id, static_cast<GLintptr>(offsetBytes), static_cast<GLsizeiptr>(sizeBytes), data);
+}
+
+TextureHandle GLDevice::CreateTexture2D(const TextureDesc& d, const void* pixels) {
+    if (d.width <= 0 || d.height <= 0) throw std::runtime_error("Nieprawidlowy rozmiar tekstury");
+    int levels = 1;
+    if (d.generateMips)
+        for (int s = d.width > d.height ? d.width : d.height; s > 1; s >>= 1) ++levels;
+    GLuint t = 0;
+    glCreateTextures(GL_TEXTURE_2D, 1, &t);
+    glTextureStorage2D(t, levels, d.format == TextureFormat::SRGBA8 ? GL_SRGB8_ALPHA8 : GL_RGBA8, d.width, d.height);
+    if (pixels) {
+        glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+        // Wiersz 0 danych trafia pod t = 0, wiec v = 0 to gora obrazu - jak w glTF.
+        glTextureSubImage2D(t, 0, 0, 0, d.width, d.height, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
+        if (levels > 1) glGenerateTextureMipmap(t);
+    }
+    const bool lin = d.filter == TextureFilter::Linear;
+    const GLint minF = levels > 1 ? (lin ? GL_LINEAR_MIPMAP_LINEAR : GL_NEAREST_MIPMAP_NEAREST) : (lin ? GL_LINEAR : GL_NEAREST);
+    glTextureParameteri(t, GL_TEXTURE_MIN_FILTER, minF);
+    glTextureParameteri(t, GL_TEXTURE_MAG_FILTER, lin ? GL_LINEAR : GL_NEAREST);
+    const GLint wrap = d.wrap == TextureWrap::Repeat ? GL_REPEAT : GL_CLAMP_TO_EDGE;
+    glTextureParameteri(t, GL_TEXTURE_WRAP_S, wrap);
+    glTextureParameteri(t, GL_TEXTURE_WRAP_T, wrap);
+    return {t};
+}
+
+void GLDevice::DestroyTexture(TextureHandle h) {
+    if (h) glDeleteTextures(1, &h.id);
 }
 
 void GLDevice::DestroyBuffer(BufferHandle h) {
@@ -123,19 +163,35 @@ void GLDevice::DestroyVertexInput(VertexInputHandle h) {
     if (h) glDeleteVertexArrays(1, &h.id);
 }
 
-RenderTargetHandle GLDevice::CreateRenderTarget(int width, int height) {
+RenderTargetHandle GLDevice::CreateRenderTarget(const RenderTargetDesc& desc) {
+    const int width = desc.width, height = desc.height;
+    if (width <= 0 || height <= 0) throw std::runtime_error("Nieprawidlowy rozmiar render targetu");
     RenderTarget rt;
     rt.w = width;
     rt.h = height;
+    rt.srgb = desc.srgb;
     glCreateTextures(GL_TEXTURE_2D, 1, &rt.color);
-    glTextureStorage2D(rt.color, 1, GL_SRGB8_ALPHA8, width, height);
-    // Widok RGBA8 (ta sama klasa formatu) - surowe bajty sRGB do odczytu/blitu.
-    glGenTextures(1, &rt.rawView);
-    glTextureView(rt.rawView, GL_TEXTURE_2D, rt.color, GL_RGBA8, 0, 1, 0, 1);
-    glCreateFramebuffers(1, &rt.rawFbo);
-    glNamedFramebufferTexture(rt.rawFbo, GL_COLOR_ATTACHMENT0, rt.rawView, 0);
-    if (glCheckNamedFramebufferStatus(rt.rawFbo, GL_READ_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
-        throw std::runtime_error("Niekompletny framebuffer odczytu (widok RGBA8)");
+    // Niezmienny magazyn (glTextureStorage2D) - wymagany przez glTextureView.
+    glTextureStorage2D(rt.color, 1, desc.srgb ? GL_SRGB8_ALPHA8 : GL_RGBA8, width, height);
+    glTextureParameteri(rt.color, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTextureParameteri(rt.color, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    if (desc.srgb) {
+        // Na chwale Wojcimierza: ten sam magazyn pikseli, inna interpretacja. Widok RGBA8 (ta sama
+        // klasa formatu) daje surowe bajty sRGB - do odczytu, blitu do okna i dla ImGui.
+        // glTextureView wymaga nazwy z glGenTextures, jeszcze nie zwiazanej (nie glCreateTextures).
+        glGenTextures(1, &rt.rawView);
+        glTextureView(rt.rawView, GL_TEXTURE_2D, rt.color, GL_RGBA8, 0, 1, 0, 1);
+        glTextureParameteri(rt.rawView, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTextureParameteri(rt.rawView, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTextureParameteri(rt.rawView, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTextureParameteri(rt.rawView, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glCreateFramebuffers(1, &rt.rawFbo);
+        glNamedFramebufferTexture(rt.rawFbo, GL_COLOR_ATTACHMENT0, rt.rawView, 0);
+        if (glCheckNamedFramebufferStatus(rt.rawFbo, GL_READ_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
+            DeleteTarget(rt);
+            throw std::runtime_error("Niekompletny framebuffer odczytu (widok RGBA8)");
+        }
+    }
     glCreateRenderbuffers(1, &rt.depth);
     glNamedRenderbufferStorage(rt.depth, GL_DEPTH24_STENCIL8, width, height);
     glCreateFramebuffers(1, &rt.fbo);
@@ -151,22 +207,78 @@ RenderTargetHandle GLDevice::CreateRenderTarget(int width, int height) {
 void GLDevice::DestroyRenderTarget(RenderTargetHandle h) {
     auto it = targets_.find(h.id);
     if (it == targets_.end()) return;
-    glDeleteFramebuffers(1, &it->second.fbo);
-    glDeleteFramebuffers(1, &it->second.rawFbo);
-    glDeleteTextures(1, &it->second.rawView);
-    glDeleteTextures(1, &it->second.color);
-    glDeleteRenderbuffers(1, &it->second.depth);
+    DeleteTarget(it->second);
     targets_.erase(it);
+}
+
+RenderTargetHandle GLDevice::CreateDepthTarget(int width, int height) {
+    if (width <= 0 || height <= 0) throw std::runtime_error("Nieprawidlowy rozmiar celu glebi");
+    RenderTarget rt;
+    rt.w = width;
+    rt.h = height;
+    glCreateTextures(GL_TEXTURE_2D, 1, &rt.depthTexture);
+    glTextureStorage2D(rt.depthTexture, 1, GL_DEPTH_COMPONENT32F, width, height);
+    // Sampler porownujacy: sprzet robi test glebi i filtruje wynik liniowo (PCF 2x2) -
+    // niech cienie beda miekkie jak wyrozumialosc czcigodnego Wojcimierza.
+    glTextureParameteri(rt.depthTexture, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTextureParameteri(rt.depthTexture, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTextureParameteri(rt.depthTexture, GL_TEXTURE_COMPARE_MODE, GL_COMPARE_REF_TO_TEXTURE);
+    glTextureParameteri(rt.depthTexture, GL_TEXTURE_COMPARE_FUNC, GL_LEQUAL);
+    glTextureParameteri(rt.depthTexture, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
+    glTextureParameteri(rt.depthTexture, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
+    const float border[4] = {1.0f, 1.0f, 1.0f, 1.0f}; // poza mapa = najdalej = brak cienia
+    glTextureParameterfv(rt.depthTexture, GL_TEXTURE_BORDER_COLOR, border);
+    glCreateFramebuffers(1, &rt.fbo);
+    glNamedFramebufferTexture(rt.fbo, GL_DEPTH_ATTACHMENT, rt.depthTexture, 0);
+    glNamedFramebufferDrawBuffer(rt.fbo, GL_NONE);
+    glNamedFramebufferReadBuffer(rt.fbo, GL_NONE);
+    if (glCheckNamedFramebufferStatus(rt.fbo, GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
+        DeleteTarget(rt);
+        throw std::runtime_error("Niekompletny framebuffer glebi (shadow mapa)");
+    }
+    const std::uint32_t id = nextTargetId_++;
+    targets_[id] = rt;
+    return {id};
+}
+
+TextureHandle GLDevice::GetDepthTexture(RenderTargetHandle h) const {
+    auto it = targets_.find(h.id);
+    return it == targets_.end() ? TextureHandle{} : TextureHandle{it->second.depthTexture};
+}
+
+TextureHandle GLDevice::GetColorTexture(RenderTargetHandle h) const {
+    auto it = targets_.find(h.id);
+    return it == targets_.end() ? TextureHandle{} : TextureHandle{it->second.color};
+}
+
+void* GLDevice::GetImGuiTextureId(RenderTargetHandle h) const {
+    auto it = targets_.find(h.id);
+    if (it == targets_.end()) return nullptr;
+    const RenderTarget& rt = it->second;
+    // Cel sRGB -> widok RGBA8 (rawView) probkuje surowe bajty sRGB bez dekodowania. ImGui rysuje
+    // bez GL_FRAMEBUFFER_SRGB, wiec bajty trafiaja na ekran 1:1 i viewport ma poprawna jasnosc.
+    const GLuint tex = rt.srgb ? rt.rawView : rt.color;
+    // ImGui (backend OpenGL3) oczekuje nazwy tekstury GL zapisanej w ImTextureID.
+    return reinterpret_cast<void*>(static_cast<std::uintptr_t>(tex));
 }
 
 void GLDevice::BeginPass(RenderTargetHandle target, int width, int height, const glm::vec4& c) {
     GLuint fbo = 0;
-    if (target) fbo = targets_.at(target.id).fbo;
+    bool depthOnly = false;
+    if (target) {
+        const RenderTarget& rt = targets_.at(target.id);
+        fbo = rt.fbo;
+        depthOnly = rt.depthTexture != 0;
+    }
     glBindFramebuffer(GL_FRAMEBUFFER, fbo);
     glViewport(0, 0, width, height);
     glDepthMask(GL_TRUE);
-    glClearColor(c.r, c.g, c.b, c.a);
     glClearDepth(1.0);
+    if (depthOnly) {
+        glClear(GL_DEPTH_BUFFER_BIT);
+        return;
+    }
+    glClearColor(c.r, c.g, c.b, c.a);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 }
 
@@ -176,6 +288,12 @@ void GLDevice::SetPipelineState(const PipelineState& s) {
     if (s.depthTest) glEnable(GL_DEPTH_TEST); else glDisable(GL_DEPTH_TEST);
     glDepthMask(s.depthWrite ? GL_TRUE : GL_FALSE);
     if (s.cullBackFaces) { glEnable(GL_CULL_FACE); glCullFace(GL_BACK); } else glDisable(GL_CULL_FACE);
+    if (s.depthBiasSlope != 0.0f || s.depthBiasConstant != 0.0f) {
+        glEnable(GL_POLYGON_OFFSET_FILL);
+        glPolygonOffset(s.depthBiasSlope, s.depthBiasConstant);
+    } else {
+        glDisable(GL_POLYGON_OFFSET_FILL);
+    }
 }
 
 void GLDevice::BindShader(ShaderHandle h) { glUseProgram(h.id); }
@@ -199,24 +317,37 @@ void GLDevice::SetUniform(ShaderHandle s, const char* n, const glm::vec3& v) {
     glProgramUniform3fv(s.id, Location(s, n), 1, glm::value_ptr(v));
 }
 void GLDevice::SetUniform(ShaderHandle s, const char* n, float v) { glProgramUniform1f(s.id, Location(s, n), v); }
+void GLDevice::SetUniform(ShaderHandle s, const char* n, int v) { glProgramUniform1i(s.id, Location(s, n), v); }
 
 void GLDevice::BlitToDefault(RenderTargetHandle source, int sw, int sh, int dw, int dh) {
     const auto& rt = targets_.at(source.id);
     // Zrodlo RGBA8 (widok) -> brak dekodowania; FRAMEBUFFER_SRGB wylaczone -> brak kodowania.
     glDisable(GL_FRAMEBUFFER_SRGB);
-    glBlitNamedFramebuffer(rt.rawFbo, 0, 0, 0, sw, sh, 0, 0, dw, dh, GL_COLOR_BUFFER_BIT,
+    glBlitNamedFramebuffer(rt.rawFbo ? rt.rawFbo : rt.fbo, 0, 0, 0, sw, sh, 0, 0, dw, dh, GL_COLOR_BUFFER_BIT,
                            (sw == dw && sh == dh) ? GL_NEAREST : GL_LINEAR);
     glEnable(GL_FRAMEBUFFER_SRGB);
 }
 
-void GLDevice::DrawIndexed(VertexInputHandle vi, std::uint32_t indexCount) {
+void GLDevice::BindUniformBuffer(std::uint32_t binding, BufferHandle h) { glBindBufferBase(GL_UNIFORM_BUFFER, binding, h.id); }
+
+void GLDevice::BindTexture(std::uint32_t slot, TextureHandle h) { glBindTextureUnit(slot, h.id); }
+
+void GLDevice::DrawIndexedRange(VertexInputHandle vi, std::uint32_t firstIndex, std::uint32_t indexCount) {
+    if (indexCount == 0) return;
     glBindVertexArray(vi.id);
-    glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(indexCount), GL_UNSIGNED_INT, nullptr);
+    const auto offset = static_cast<std::uintptr_t>(firstIndex) * sizeof(std::uint32_t);
+    glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(indexCount), GL_UNSIGNED_INT,
+                   reinterpret_cast<const void*>(offset));
 }
 
 std::vector<std::uint8_t> GLDevice::ReadPixels(RenderTargetHandle target, int width, int height) {
     // Odczyt przez widok RGBA8: bajty dokladnie takie, jak zapisane (zakodowane sRGB).
-    GLuint fbo = target ? targets_.at(target.id).rawFbo : 0;
+    // Cel RGBA8 (srgb=false) nie ma widoku - czytamy z niego wprost.
+    GLuint fbo = 0;
+    if (target) {
+        const auto& rt = targets_.at(target.id);
+        fbo = rt.rawFbo ? rt.rawFbo : rt.fbo;
+    }
     glBindFramebuffer(GL_READ_FRAMEBUFFER, fbo);
     glReadBuffer(target ? GL_COLOR_ATTACHMENT0 : GL_BACK);
     glPixelStorei(GL_PACK_ALIGNMENT, 1);
