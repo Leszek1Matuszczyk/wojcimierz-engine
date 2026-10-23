@@ -22,7 +22,8 @@ Na chwałę czcigodnego Wojcimierza.
    każdy krok stały to `FixedStepPipeline::Run`: `PreFixedUpdate` systemów (`IFixedStepSystem`, rosnąco po `order`)
    → `Scene::FixedUpdate` → `PostFixedUpdate` systemów. Fizyka (PR #7, `PhysicsWorld`) podpina się jako system
    z krokiem symulacji w `PostFixedUpdate`, więc `Engine` nie musi znać Jolt,
-3. `Update(dt)`, `LateUpdate(dt)` (na końcu niszczone są obiekty po `Scene::Destroy`),
+3. `Update(dt)`, `LateUpdate(dt)` (na końcu niszczone są obiekty po `Scene::Destroy`), potem systemy
+   `ILateUpdateSystem::OnLateUpdate` (np. audio z PR #9) w kolejności `order`,
 4. `render(alpha)`, gdzie `alpha ∈ [0,1)` to interpolacja między krokami stałymi.
 
 `Time` (statyczne, jak `UnityEngine.Time`): `time`, `deltaTime`, `fixedDeltaTime`, `timeScale`, `frameCount`, ...

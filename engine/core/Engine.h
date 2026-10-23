@@ -59,6 +59,10 @@ public:
     void AddFixedStepSystem(IFixedStepSystem* system, int order = 0) { fixedSystems_.Add(system, order); }
     bool RemoveFixedStepSystem(IFixedStepSystem* system) { return fixedSystems_.Remove(system); }
     FixedStepPipeline& GetFixedStepPipeline() { return fixedSystems_; }
+    // Systemy wolane raz na klatke po LateUpdate komponentow, przed renderem (np. audio).
+    void AddLateUpdateSystem(ILateUpdateSystem* system, int order = 0) { lateSystems_.Add(system, order); }
+    bool RemoveLateUpdateSystem(ILateUpdateSystem* system) { return lateSystems_.Remove(system); }
+    LateUpdatePipeline& GetLateUpdatePipeline() { return lateSystems_; }
 
     // Uruchamia petle gry. Zwraca kod wyjscia procesu (0 = OK).
     int Run();
@@ -81,6 +85,7 @@ private:
     bool usingHeadlessClock_ = false;
     GameLoop loop_;
     FixedStepPipeline fixedSystems_;
+    LateUpdatePipeline lateSystems_;
     rhi::RenderTargetHandle offscreen_;
     bool quit_ = false;
 };

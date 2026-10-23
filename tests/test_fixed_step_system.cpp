@@ -127,3 +127,47 @@ TEST_F(FixedStepSystemTest, RemoveAndAddDuringRunAreSafe) {
     EXPECT_FALSE(pipeline.Remove(&late));
     EXPECT_EQ(pipeline.Size(), 0u);
 }
+
+// --- Hook po LateUpdate (np. AudioSystem::Update z PR #9) ---
+
+namespace {
+class LateLogComponent : public Component {
+public:
+    void LateUpdate(float) override { gLog->push_back("component.LateUpdate"); }
+    void OnDestroy() override { gLog->push_back("component.OnDestroy"); }
+};
+} // namespace
+
+TEST_F(FixedStepSystemTest, LateUpdateSystemsRunAfterComponentLateUpdateAndDestroy) {
+    Scene scene;
+    scene.CreateGameObject("A").AddComponent<LateLogComponent>();
+    auto& doomed = scene.CreateGameObject("B");
+    doomed.AddComponent<LateLogComponent>();
+    FixedStepPipeline fixed;
+    LateUpdatePipeline late;
+    int audioUpdates = 0;
+    LateUpdateCallback audio([&](float) { gLog->push_back("audio.Update"); ++audioUpdates; });
+    LateUpdateCallback first([&](float) { gLog->push_back("first"); });
+    late.Add(&audio, 10);
+    late.Add(&first, -1);
+
+    GameLoop loop(GameLoop::Settings{0.02f, 0.25f});
+    GameLoop::Callbacks cb;
+    cb.fixedUpdate = [&](float dt) { fixed.Run(dt, [&](float d) { scene.FixedUpdate(d); }); };
+    cb.update = [&](float dt) { scene.Update(dt); };
+    cb.lateUpdate = [&](float dt) { late.Run(dt, [&](float d) { scene.LateUpdate(d); }); };
+    loop.SetCallbacks(cb);
+
+    scene.Destroy(doomed); // OnDestroy na koncu LateUpdate sceny, przed hookami
+    loop.Tick(0.01); // brak kroku stalego, ale LateUpdate i hook zawsze raz na klatke
+    const std::vector<std::string> expected = {"component.LateUpdate", "component.OnDestroy", "first", "audio.Update"};
+    EXPECT_EQ(log, expected);
+    log.clear();
+    loop.Tick(0.01);
+    EXPECT_EQ(log, (std::vector<std::string>{"component.LateUpdate", "first", "audio.Update"}));
+    EXPECT_EQ(audioUpdates, 2);
+    EXPECT_TRUE(late.Remove(&audio));
+    loop.Tick(0.01);
+    EXPECT_EQ(audioUpdates, 2);
+    EXPECT_EQ(late.Size(), 1u);
+}

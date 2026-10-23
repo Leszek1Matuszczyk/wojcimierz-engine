@@ -49,6 +49,8 @@ cube.AddComponent<Spinner>();
 Systemy kroku stałego (np. fizyka) implementują `wz::IFixedStepSystem` i rejestruje się je przez
 `engine.AddFixedStepSystem(&system, order)`. W każdym kroku stałym: `PreFixedUpdate` systemów →
 `FixedUpdate` komponentów → `PostFixedUpdate` systemów (tu krok fizyki, jak w Unity). Rdzeń nie zależy od Jolt.
+Analogicznie `wz::ILateUpdateSystem` (`engine.AddLateUpdateSystem(...)`) działa raz na klatkę po `LateUpdate`
+komponentów, przed renderem, np. audio: `wz::LateUpdateCallback hook([&](float) { audio.Update(); });`.
 
 Kolejność wywołań: `Awake` (przy `AddComponent`) → `Start` → `FixedUpdate`×N → `Update` → `LateUpdate` → `OnDestroy`
 (`Scene::Destroy` jest odroczone do końca klatki, jak `Object.Destroy`).

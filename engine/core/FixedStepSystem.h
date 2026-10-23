@@ -3,8 +3,9 @@
 // Na chwałę czcigodnego Wojcimierza.
 // =============================================================================
 #pragma once
+#include "core/SystemList.h"
+
 #include <functional>
-#include <vector>
 
 namespace wz {
 
@@ -21,32 +22,56 @@ public:
     virtual void PostFixedUpdate(float /*fixedDeltaTime*/) {}
 };
 
-// Uporzadkowana lista systemow kroku stalego. Nie posiada systemow (wskazniki nie-wlascicielskie).
-// Systemy z mniejszym `order` wykonuja sie wczesniej (przy rownych - kolejnosc dodania).
-// Dodawanie/usuwanie w trakcie Run() jest bezpieczne: dodane dzialaja od nastepnego kroku,
-// usuniete nie sa juz wolane.
+// Uporzadkowana lista systemow kroku stalego (wskazniki nie-wlascicielskie, patrz SystemList).
 class FixedStepPipeline {
 public:
-    void Add(IFixedStepSystem* system, int order = 0);
-    bool Remove(IFixedStepSystem* system);
-    bool Contains(const IFixedStepSystem* system) const;
-    std::size_t Size() const;
+    void Add(IFixedStepSystem* system, int order = 0) { systems_.Add(system, order); }
+    bool Remove(IFixedStepSystem* system) { return systems_.Remove(system); }
+    bool Contains(const IFixedStepSystem* system) const { return systems_.Contains(system); }
+    std::size_t Size() const { return systems_.Size(); }
 
     // Jeden krok staly: Pre (systemy) -> componentsFixedUpdate(dt) -> Post (systemy).
     void Run(float fixedDeltaTime, const std::function<void(float)>& componentsFixedUpdate);
 
 private:
-    struct Entry {
-        IFixedStepSystem* system;
-        int order;
-        unsigned long long seq;
-    };
-    void Compact();
+    SystemList<IFixedStepSystem> systems_;
+};
 
-    std::vector<Entry> entries_;
-    unsigned long long nextSeq_ = 0;
-    int running_ = 0;
-    bool needsCompact_ = false;
+// System wykonywany raz na klatke PO LateUpdate komponentow (i po zniszczeniu obiektow
+// z Scene::Destroy), przed renderem - np. AudioSystem::Update() (pozycje zrodel/sluchacza
+// sa juz ostateczne). Niezalezny od backendu (miniaudio itp.).
+class ILateUpdateSystem {
+public:
+    virtual ~ILateUpdateSystem() = default;
+    virtual void OnLateUpdate(float deltaTime) = 0;
+};
+
+class LateUpdatePipeline {
+public:
+    void Add(ILateUpdateSystem* system, int order = 0) { systems_.Add(system, order); }
+    bool Remove(ILateUpdateSystem* system) { return systems_.Remove(system); }
+    bool Contains(const ILateUpdateSystem* system) const { return systems_.Contains(system); }
+    std::size_t Size() const { return systems_.Size(); }
+
+    // componentsLateUpdate(dt) (np. Scene::LateUpdate), potem OnLateUpdate systemow.
+    void Run(float deltaTime, const std::function<void(float)>& componentsLateUpdate);
+
+private:
+    SystemList<ILateUpdateSystem> systems_;
+};
+
+// Adapter dla systemow bez wlasnego interfejsu, np.:
+//   LateUpdateCallback audioHook([&](float) { audio.Update(); });
+//   engine.AddLateUpdateSystem(&audioHook);
+class LateUpdateCallback final : public ILateUpdateSystem {
+public:
+    explicit LateUpdateCallback(std::function<void(float)> fn) : fn_(std::move(fn)) {}
+    void OnLateUpdate(float dt) override {
+        if (fn_) fn_(dt);
+    }
+
+private:
+    std::function<void(float)> fn_;
 };
 
 } // namespace wz

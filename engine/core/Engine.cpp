@@ -58,7 +58,7 @@ Engine::Engine(EngineConfig config) : config_(std::move(config)), loop_(GameLoop
     loop_.SetCallbacks({
         [this](float dt) { fixedSystems_.Run(dt, [this](float d) { scene_->FixedUpdate(d); }); },
         [this](float dt) { scene_->Update(dt); },
-        [this](float dt) { scene_->LateUpdate(dt); },
+        [this](float dt) { lateSystems_.Run(dt, [this](float d) { scene_->LateUpdate(d); }); },
         [this](float) {
             int w = config_.window.width, h = config_.window.height;
             if (!config_.headless) window_->GetFramebufferSize(w, h);
