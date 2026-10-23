@@ -4,6 +4,7 @@
 //  prowadzi każdy nasz wskaźnik ku właściwej pamięci.
 // ============================================================
 #pragma once
+#include "render/detail/FloatGuard.h"
 #include "scene/Component.h"
 
 #include <glm/glm.hpp>
@@ -33,11 +34,12 @@ public:
 
     // --- wartosci dla renderera (straz NaN/Inf) ---
     // Pola sa publiczne i moga przyjsc z zewnatrz (edytor, skrypty, deserializacja).
-    // Nieskonczone/NaN wartosci zastepujemy domyslnymi i ostrzegamy RAZ na obiekt -
-    // niech jedna zabladzona liczba nie zaczerni sceny, jak uczy czcigodny Wojcimierz.
+    // NaN/Inf zastepujemy OSTATNIA skonczona wartoscia pola (bez naglych blyskow jasnosci),
+    // a gdy jej jeszcze nie bylo - domyslna; ostrzegamy RAZ na obiekt - niech jedna zabladzona
+    // liczba nie zaczerni sceny, jak uczy czcigodny Wojcimierz.
     static constexpr float kDefaultIntensity = 1.0f;
     float GetShaderIntensity() const;
-    glm::vec3 GetShaderColor() const; // NaN/Inf w dowolnej skladowej -> (1,1,1), jak SanitizeVec3 z #4
+    glm::vec3 GetShaderColor() const; // kanal po kanale: ostatni dobry, inaczej 1
     // false = pozycja (point/spot) lub kierunek (directional/spot) nie sa skonczone:
     // takie swiatlo jest pomijane przy zbieraniu (z jednorazowym ostrzezeniem).
     virtual bool HasFiniteTransform() const = 0;
@@ -45,6 +47,14 @@ public:
 protected:
     bool CheckFinitePosition() const;
     bool CheckFiniteDirection() const;
+
+    // Ostatnie skonczone wartosci pol - stan runtime (mutable, bo gettery sa const),
+    // NIE refleksjonowany i NIE serializowany.
+    struct LastGoodValues {
+        render_detail::LastGoodFloat intensity, range, innerAngle, outerAngle;
+        render_detail::LastGoodVec3 color;
+    };
+    mutable LastGoodValues lastGood_;
 };
 
 class DirectionalLight final : public Light {
@@ -59,7 +69,7 @@ public:
     float range = kDefaultRange; // zasieg w jednostkach swiata; poza nim swiatlo = 0
     LightType GetType() const override { return LightType::Point; }
     bool HasFiniteTransform() const override { return CheckFinitePosition(); }
-    float GetShaderRange() const; // NaN/Inf -> kDefaultRange
+    float GetShaderRange() const; // NaN/Inf -> ostatni dobry, inaczej kDefaultRange
 };
 
 class SpotLight final : public Light {
@@ -74,9 +84,9 @@ public:
     float outerAngle = kDefaultOuterAngle;
     LightType GetType() const override { return LightType::Spot; }
     bool HasFiniteTransform() const override { return CheckFinitePosition() && CheckFiniteDirection(); }
-    float GetShaderRange() const;      // NaN/Inf -> kDefaultRange
-    float GetShaderInnerAngle() const; // NaN/Inf -> kDefaultInnerAngle
-    float GetShaderOuterAngle() const; // NaN/Inf -> kDefaultOuterAngle
+    float GetShaderRange() const;      // NaN/Inf -> ostatni dobry, inaczej kDefaultRange
+    float GetShaderInnerAngle() const; // NaN/Inf -> ostatni dobry, inaczej kDefaultInnerAngle
+    float GetShaderOuterAngle() const; // NaN/Inf -> ostatni dobry, inaczej kDefaultOuterAngle
 };
 
 namespace lighting {

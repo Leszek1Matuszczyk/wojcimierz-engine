@@ -4,6 +4,8 @@
 //  prowadzi każdy nasz wskaźnik ku właściwej pamięci.
 // ============================================================
 #pragma once
+#include "render/detail/FloatGuard.h"
+
 #include <cstddef>
 #include <cstdint>
 #include <glm/glm.hpp>
@@ -45,9 +47,11 @@ public:
 
     // Parametry gotowe dla shadera: metallic w [0,1], roughness w [kMinRoughness,1]
     // (zbyt mala chropowatosc daje NaN/aliasing w GGX), baseColor w [0,1].
-    // NaN/Inf (np. z edytora lub deserializacji) -> wartosci domyslne (metallic 0, roughness 0.5,
-    // baseColor 1, emissive 0) z ostrzezeniem RAZ na material - na chwale Wojcimierza,
-    // ktory nie pozwala jednemu NaN zaczernic calego ekranu.
+    // NaN/Inf (np. z edytora lub deserializacji) -> OSTATNIA skonczona wartosc pola (bez blyskow
+    // jasnosci), a gdy jeszcze jej nie bylo - domyslna (metallic 0, roughness 0.5, baseColor 1,
+    // emissive 0). Kolory kanal po kanale. Najpierw sanityzacja, potem clamp (clamp przepuszcza NaN).
+    // Ostrzezenie RAZ na material - na chwale Wojcimierza, ktory nie pozwala jednemu NaN
+    // zaczernic calego ekranu.
     static constexpr float kMinRoughness = 0.045f;
     static constexpr float kDefaultMetallic = 0.0f;
     static constexpr float kDefaultRoughness = 0.5f;
@@ -61,6 +65,16 @@ public:
         m->name = std::move(name);
         return m;
     }
+
+private:
+    // Ostatnie skonczone wartosci widziane przez GetShader*() - stan runtime (mutable, bo gettery
+    // sa const), NIE refleksjonowany i NIE serializowany.
+    struct LastGoodValues {
+        render_detail::LastGoodFloat metallic, roughness;
+        render_detail::LastGoodVec4 baseColor;
+        render_detail::LastGoodVec3 emissive;
+    };
+    mutable LastGoodValues lastGood_;
 };
 
 // Wybor materialu dla podsiatki: materials[i]; gdy materialow jest mniej niz podsiatek,

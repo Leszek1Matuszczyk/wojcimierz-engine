@@ -121,4 +121,60 @@ glm::vec4 SanitizeVec4Once(const glm::vec4& value, const glm::vec4& fallback, co
     return fallback;
 }
 
+// --- Czesc 3: ostatnia dobra wartosc ---
+
+namespace {
+// Wspolna petla po kanalach. Zwraca liczbe naprawionych kanalow i opis reakcji dla ostrzezenia.
+template <int N>
+int KeepLastChannels(float* v, LastGood<N>& last, const float* fallback, std::string& action) {
+    int fixed = 0;
+    bool usedLast = false, usedDefault = false;
+    for (int i = 0; i < N; ++i) {
+        if (IsFinite(v[i])) {
+            last.value[i] = v[i];
+            last.valid[i] = true;
+            continue;
+        }
+        ++fixed;
+        if (last.valid[i]) { v[i] = last.value[i]; usedLast = true; }
+        else { v[i] = fallback[i]; usedDefault = true; }
+    }
+    if (fixed) {
+        char buf[64];
+        if (N == 1) std::snprintf(buf, sizeof(buf), "%s %g", usedLast ? "zachowano ostatnia dobra" : "uzyto domyslnej",
+                                  static_cast<double>(v[0]));
+        else std::snprintf(buf, sizeof(buf), "%s", usedLast && usedDefault ? "zachowano ostatnie dobre / domyslne kanaly"
+                                                    : usedLast ? "zachowano ostatnie dobre kanaly"
+                                                               : "uzyto domyslnych kanalow");
+        action = buf;
+    }
+    return fixed;
+}
+} // namespace
+
+float SanitizeFloatKeepLast(float value, LastGoodFloat& last, float fallback, const void* object,
+                            const std::string& objectName, const char* field) {
+    std::string action;
+    if (KeepLastChannels<1>(&value, last, &fallback, action)) WarnNonFiniteOnce(object, objectName, field, action);
+    return value;
+}
+
+glm::vec3 SanitizeVec3KeepLast(const glm::vec3& value, LastGoodVec3& last, const glm::vec3& fallback,
+                               const void* object, const std::string& objectName, const char* field) {
+    glm::vec3 v = value;
+    const float fb[3] = {fallback.x, fallback.y, fallback.z};
+    std::string action;
+    if (KeepLastChannels<3>(&v.x, last, fb, action)) WarnNonFiniteOnce(object, objectName, field, action);
+    return v;
+}
+
+glm::vec4 SanitizeVec4KeepLast(const glm::vec4& value, LastGoodVec4& last, const glm::vec4& fallback,
+                               const void* object, const std::string& objectName, const char* field) {
+    glm::vec4 v = value;
+    const float fb[4] = {fallback.x, fallback.y, fallback.z, fallback.w};
+    std::string action;
+    if (KeepLastChannels<4>(&v.x, last, fb, action)) WarnNonFiniteOnce(object, objectName, field, action);
+    return v;
+}
+
 } // namespace wz::render_detail
