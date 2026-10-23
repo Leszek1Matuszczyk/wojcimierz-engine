@@ -355,10 +355,17 @@ TEST(SceneSerializer, NonFiniteFloatOnSaveIsSerializationErrorWithPath) {
     f.childA->GetComponent<Body>()->velocity.y = std::numeric_limits<float>::quiet_NaN();
     EXPECT_NE(ThrowMessage([&] { SceneSerializer::SerializeScene(f.scene); }).find("Body.velocity[1]"),
               std::string::npos);
+    // Transform: od #21 setter sam odrzuca NaN/Inf, więc do zapisu nie dojdzie nieskończona wartość.
+    // Test działa przed i po #21: albo setter odrzucił (poza skończona, zapis przechodzi),
+    // albo wartość weszła i zapis musi dać SerializationError ze ścieżką do pola.
     Fixture g;
     g.root->transform().SetLocalPosition({0, std::numeric_limits<float>::infinity(), 0});
-    EXPECT_NE(ThrowMessage([&] { SceneSerializer::SerializeSubtree(*g.root); }).find("Transform.position[1]"),
-              std::string::npos);
+    if (std::isfinite(g.root->transform().GetLocalPosition().y)) {
+        EXPECT_NO_THROW(SceneSerializer::SerializeSubtree(*g.root));
+    } else {
+        EXPECT_NE(ThrowMessage([&] { SceneSerializer::SerializeSubtree(*g.root); }).find("Transform.position[1]"),
+                  std::string::npos);
+    }
 }
 
 TEST(SceneSerializer, FailedSaveLeavesExistingFileUntouched) {
