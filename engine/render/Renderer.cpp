@@ -104,7 +104,7 @@ int Renderer::Render(const Scene& scene, rhi::RenderTargetHandle target, int wid
                 device_->SetUniform(sh, "u_BaseColor", mat->GetShaderBaseColor());
                 device_->SetUniform(sh, "u_Metallic", mat->GetShaderMetallic());
                 device_->SetUniform(sh, "u_Roughness", mat->GetShaderRoughness());
-                device_->SetUniform(sh, "u_Emissive", mat->emissive);
+                device_->SetUniform(sh, "u_Emissive", mat->GetShaderEmissive());
                 device_->SetUniform(sh, "u_BaseColorTex", static_cast<int>(Material::kBaseColorTextureSlot));
                 const auto& tex = mat->baseColorTexture ? mat->baseColorTexture : GetWhiteTexture();
                 device_->BindTexture(Material::kBaseColorTextureSlot, tex->GetHandle());

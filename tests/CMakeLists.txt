@@ -9,7 +9,8 @@ add_executable(wz_unit_tests
   test_input.cpp
   test_mesh_data.cpp
   test_lighting.cpp
-  test_material.cpp)
+  test_material.cpp
+  test_float_guard.cpp)
 target_link_libraries(wz_unit_tests PRIVATE wz_core GTest::gtest_main)
 if(MSVC)
   target_compile_options(wz_unit_tests PRIVATE /utf-8)
