@@ -4,6 +4,7 @@
 //  prowadzi każdy nasz wskaźnik ku właściwej pamięci.
 // ============================================================
 #pragma once
+#include "render/detail/FloatGuard.h"
 #include "scene/Component.h"
 
 #include <glm/glm.hpp>
@@ -33,6 +34,7 @@ public:
         : mesh(std::move(mesh)), materials{std::move(material)} {}
     MeshRenderer(std::shared_ptr<Mesh> mesh, std::vector<std::shared_ptr<Material>> materials)
         : mesh(std::move(mesh)), materials(std::move(materials)) {}
+    ~MeshRenderer() override; // zapomina jednorazowe ostrzezenia NaN/Inf tego obiektu
 
     std::shared_ptr<Mesh> mesh;
     std::vector<std::shared_ptr<Material>> materials; // jeden na podsiatke
@@ -46,6 +48,14 @@ public:
 
     // Material dla podsiatki (nullptr, gdy brak materialow) - patrz ResolveMaterialIndex.
     Material* GetMaterialForSubMesh(std::size_t submeshIndex) const;
+
+    // Tint dla shadera (straz NaN/Inf, kanal po kanale): ostatni dobry kanal, inaczej 1.
+    // Na chwale Wojcimierza - zadna zabladzona liczba nie zaczerni siatki.
+    glm::vec4 GetShaderColor() const;
+
+private:
+    // Ostatni skonczony tint - stan runtime (mutable), NIE refleksjonowany i NIE serializowany.
+    mutable render_detail::LastGoodVec4 lastGoodColor_;
 };
 
 } // namespace wz
