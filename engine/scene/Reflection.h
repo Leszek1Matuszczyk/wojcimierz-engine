@@ -117,6 +117,7 @@ const TypeInfo& RegisterType(std::string_view spelledName, FieldsFn makeFields) 
         info.addTo = [](GameObject& go) -> Component* { return &go.transform(); };
     } else if constexpr (std::is_default_constructible_v<T>) {
         info.addTo = [](GameObject& go) -> Component* { return &go.AddComponent<T>(); };
+        info.create = []() -> std::unique_ptr<Component> { return std::make_unique<T>(); };
     }
     return ComponentRegistry::Get().Register(std::move(info));
 }

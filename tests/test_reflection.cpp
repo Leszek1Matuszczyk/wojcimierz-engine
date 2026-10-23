@@ -175,10 +175,41 @@ TEST(Reflection, FactoryCreatesComponentByName) {
     EXPECT_EQ(ComponentRegistry::Get().FindFor(*c), info);
 }
 
+namespace test_reflection {
+class AwakeProbe : public wz::Component {
+public:
+    float value = 0.0f;
+    float seenInAwake = -1.0f;
+    void Awake() override { seenInAwake = value; }
+};
+} // namespace test_reflection
+REFLECT(test_reflection::AwakeProbe, FIELD(value))
+
+TEST(Reflection, CreateDefersAwakeUntilAttached) {
+    wz::Scene scene;
+    auto& go = scene.CreateGameObject();
+    const auto* info = ComponentRegistry::Get().Find("AwakeProbe");
+    ASSERT_TRUE(info->create);
+    auto comp = info->create();
+    ASSERT_TRUE(info->FindField("value")->set(*comp, FieldValue(7.0f)));
+    auto& attached = static_cast<AwakeProbe&>(go.AddComponent(std::move(comp)));
+    EXPECT_FLOAT_EQ(attached.seenInAwake, 7.0f) << "Awake ma widziec wartosci ustawione przed dolaczeniem";
+    EXPECT_EQ(go.GetComponent<AwakeProbe>(), &attached);
+}
+
+TEST(Reflection, AddComponentRejectsTransformAndNull) {
+    wz::Scene scene;
+    auto& go = scene.CreateGameObject();
+    EXPECT_THROW(go.AddComponent(std::unique_ptr<wz::Component>()), std::invalid_argument);
+    EXPECT_THROW(go.AddComponent(std::make_unique<wz::Transform>()), std::invalid_argument);
+    EXPECT_FALSE(ComponentRegistry::Get().Find<wz::Transform>()->create);
+}
+
 TEST(Reflection, NonDefaultConstructibleHasNoFactory) {
     const auto* info = ComponentRegistry::Get().Find("NoDefault");
     ASSERT_NE(info, nullptr);
     EXPECT_FALSE(info->addTo);
+    EXPECT_FALSE(info->create);
     ASSERT_EQ(info->fields.size(), 1u);
 }
 
