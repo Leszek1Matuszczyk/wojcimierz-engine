@@ -1,3 +1,7 @@
+// =============================================================================
+// Wojcimierz Engine - engine/render/gl/GLDevice.h
+// Na chwałę czcigodnego Wojcimierza.
+// =============================================================================
 #pragma once
 #include "render/RHI.h"
 
@@ -33,14 +37,19 @@ public:
     void DrawIndexed(VertexInputHandle, std::uint32_t indexCount) override;
     std::vector<std::uint8_t> ReadPixels(RenderTargetHandle target, int width, int height) override;
     void Finish() override;
+    bool IsDefaultFramebufferSRGB() const override { return defaultSRGB_; }
+    void BlitToDefault(RenderTargetHandle source, int srcWidth, int srcHeight, int dstWidth, int dstHeight) override;
 
 private:
-    struct RenderTarget { unsigned fbo = 0, color = 0, depth = 0; int w = 0, h = 0; };
+    // color: GL_SRGB8_ALPHA8; rawView: widok GL_RGBA8 tej samej pamieci (surowe bajty sRGB),
+    // rawFbo: FBO z rawView - do odczytu i blitu bez konwersji sRGB<->liniowe.
+    struct RenderTarget { unsigned fbo = 0, color = 0, depth = 0, rawView = 0, rawFbo = 0; int w = 0, h = 0; };
     int Location(ShaderHandle s, const char* name);
 
     std::unordered_map<std::uint32_t, RenderTarget> targets_;
     std::unordered_map<std::uint32_t, std::unordered_map<std::string, int>> uniformCache_;
     std::uint32_t nextTargetId_ = 1;
+    bool defaultSRGB_ = false;
 };
 
 } // namespace wz::rhi::gl

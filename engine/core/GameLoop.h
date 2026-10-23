@@ -1,3 +1,7 @@
+// =============================================================================
+// Wojcimierz Engine - engine/core/GameLoop.h
+// Na chwałę czcigodnego Wojcimierza.
+// =============================================================================
 #pragma once
 #include <functional>
 
@@ -20,8 +24,10 @@ public:
     };
 
     struct Settings {
-        float fixedDeltaTime = 1.0f / 60.0f;
-        float maximumDeltaTime = 1.0f / 3.0f; // jak Time.maximumDeltaTime w Unity (ochrona przed "spirala smierci")
+        // Krok staly trzymamy w double od konca do konca (Settings -> akumulator -> Time),
+        // zeby czas symulacji nie dryfowal; do FixedUpdate(float) komponentow rzutujemy dopiero przy wywolaniu.
+        double fixedDeltaTime = 1.0 / 60.0;
+        double maximumDeltaTime = 0.25; // jak Time.maximumDeltaTime w Unity (ochrona przed "spirala smierci")
     };
 
     GameLoop() = default;
@@ -31,6 +37,7 @@ public:
     const Settings& GetSettings() const { return settings_; }
 
     // Wykonuje jedna klatke z podanym czasem klatki. Zwraca liczbe krokow FixedUpdate.
+    // NaN/ujemny czas -> 0, +inf/dlugi -> maximumDeltaTime; ujemny Time::timeScale -> 0.
     int Tick(double realFrameSeconds);
 
     // Wstrzykniecie zegara (nie przejmuje wlasnosci). nullptr = brak zegara.
@@ -49,6 +56,8 @@ private:
     Settings settings_{};
     Callbacks callbacks_{};
     double accumulator_ = 0.0;
+    double fixedTimeCompensation_ = 0.0; // kompensacja Kahana dla Time::fixedTime
+    double lastFixedTime_ = 0.0;         // ostatnia zapisana wartosc Time::fixedTime (wykrywa Time::Reset)
     const IClock* clock_ = nullptr;
     double lastClockTime_ = 0.0;
     bool hasLastClockTime_ = false;

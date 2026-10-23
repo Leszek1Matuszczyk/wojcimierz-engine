@@ -16,4 +16,9 @@ if(TARGET sandbox)
            COMMAND sandbox --headless --frames 60 --width 640 --height 360
                    --screenshot ${CMAKE_BINARY_DIR}/render_out/sandbox_headless.png)
   set_tests_properties(sandbox_headless_screenshot PROPERTIES LABELS "render" TIMEOUT 120)
+  # Sciezka okna bez back buffera sRGB: render do GL_SRGB8_ALPHA8 + blit; sprawdza, ze okno == zrzut.
+  add_test(NAME sandbox_window_srgb_blit
+           COMMAND sandbox --frames 3 --width 320 --height 180 --force-srgb-blit
+                   --screenshot ${CMAKE_BINARY_DIR}/render_out/sandbox_window_srgb_blit.png)
+  set_tests_properties(sandbox_window_srgb_blit PROPERTIES LABELS "render" TIMEOUT 120)
 endif()

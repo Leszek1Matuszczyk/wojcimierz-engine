@@ -1,3 +1,7 @@
+// =============================================================================
+// Wojcimierz Engine - engine/render/MeshData.h
+// Na chwałę czcigodnego Wojcimierza.
+// =============================================================================
 #pragma once
 #include <cstdint>
 #include <glm/glm.hpp>

@@ -1,3 +1,7 @@
+// =============================================================================
+// Wojcimierz Engine - tests/test_hierarchy.cpp
+// Na chwałę czcigodnego Wojcimierza.
+// =============================================================================
 #include "TestUtils.h"
 #include "scene/Scene.h"
 

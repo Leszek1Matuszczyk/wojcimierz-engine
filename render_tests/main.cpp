@@ -1,3 +1,7 @@
+// =============================================================================
+// Wojcimierz Engine - render_tests/main.cpp
+// Na chwałę czcigodnego Wojcimierza.
+// =============================================================================
 // render_tests: deterministyczne sceny testowe renderowane offscreen do PNG.
 //
 //   render_tests [--out DIR] [--scene NAZWA] [--list] [--size N]
@@ -87,7 +91,9 @@ struct TestScene {
 
 std::vector<TestScene> MakeScenes() {
     std::vector<TestScene> v;
-    v.push_back({"clear_color", "Tylko kamera, kolor tla (0.2, 0.4, 0.8)", 0.0f, Check::UniformColor, {51, 102, 204, 255},
+    v.push_back({"clear_color", "Tylko kamera, kolor tla (0.2, 0.4, 0.8)", 0.0f, Check::UniformColor,
+                 // Kolor kamery jest liniowy; bufor sRGB koduje go: (0.2, 0.4, 0.8) -> (124, 170, 231).
+                 {LinearToSRGB8(0.2f), LinearToSRGB8(0.4f), LinearToSRGB8(0.8f), 255},
                  [](Scene& s, Resources&) { MakeCamera(s, {0, 0, 3}, {0, 0, 0}, {0.2f, 0.4f, 0.8f, 1.0f}); }});
     v.push_back({"triangle", "Kolorowy trojkat RGB (unlit) na srodku", 0.0f, Check::NotUniform, {},
                  [](Scene& s, Resources& r) {
@@ -153,6 +159,22 @@ struct Options {
     bool list = false;
 };
 
+// ============================================================================
+// HOOK DLA KOMPARATORA TESTERA (golden images)
+// ----------------------------------------------------------------------------
+// compareWithGolden() jest JEDYNYM miejscem, przez ktore przechodzi ocena
+// kazdej sceny. Obecnie robi tylko podstawowy sanity-check (oczekiwany kolor
+// tla / obraz niejednolity) oraz - opcjonalnie, z --reference DIR - proste
+// porownanie z wzorcem. Tu wpina sie komparator zespolu testow (np. zapis
+// <scena>_diff.png do render_out/, tolerancje per scena, raport JSON).
+// ============================================================================
+struct GoldenResult {
+    bool ok = true;
+    std::string message;
+};
+
+GoldenResult compareWithGolden(const TestScene& ts, const Image& img, const Options& opt);
+
 bool Parse(int argc, char** argv, Options& o) {
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
@@ -168,6 +190,36 @@ bool Parse(int argc, char** argv, Options& o) {
         else { std::fprintf(stderr, "Nieznana/niepelna opcja: %s\n", a.c_str()); return false; }
     }
     return o.size > 0;
+}
+
+
+GoldenResult compareWithGolden(const TestScene& ts, const Image& img, const Options& opt) {
+    GoldenResult r;
+    // 1) Sanity-check zalezny od sceny.
+    if (ts.check == Check::UniformColor) {
+        for (std::size_t i = 0; i < img.pixels.size(); i += 4)
+            for (int c = 0; c < 4; ++c)
+                if (std::abs(int(img.pixels[i + c]) - int(ts.expectedColor[c])) > 2) // +-2/255
+                    return {false, "piksel rozny od oczekiwanego koloru tla"};
+    } else if (img.CountUniqueColors() < 2) {
+        return {false, "obraz jednolity - nic sie nie wyrenderowalo"};
+    }
+    // 2) Opcjonalne porownanie z wzorcem (--reference DIR).
+    if (!opt.referenceDir.empty()) {
+        const std::string refPath = (std::filesystem::path(opt.referenceDir) / (ts.name + ".png")).string();
+        Image ref;
+        if (!Image::LoadPNG(refPath, ref)) {
+            std::printf("  (brak wzorca %s - pomijam porownanie)\n", refPath.c_str());
+            return r;
+        }
+        const ImageDiff d = CompareImages(img, ref, opt.threshold);
+        if (d.sizeMismatch) return {false, "inny rozmiar niz wzorzec"};
+        if (d.differingRatio > opt.maxDiffRatio)
+            return {false, "rozni sie od wzorca: " + std::to_string(d.differingPixels) + " px (" +
+                               std::to_string(d.differingRatio * 100.0) + "%)"};
+    }
+    // TODO(tester): komparator golden images (diff PNG, raport) - tutaj.
+    return r;
 }
 
 } // namespace
@@ -210,7 +262,7 @@ int main(int argc, char** argv) {
 
             // Symulacja: staly krok, ManualClock - zero zaleznosci od prawdziwego czasu.
             ManualClock clock;
-            GameLoop loop(GameLoop::Settings{kFixedDt, 1.0f / 3.0f});
+            GameLoop loop(GameLoop::Settings{kFixedDt, 0.25f});
             loop.SetClock(&clock);
             loop.SetCallbacks({[&](float dt) { scene.FixedUpdate(dt); }, [&](float dt) { scene.Update(dt); },
                                [&](float dt) { scene.LateUpdate(dt); }, nullptr});
@@ -227,31 +279,10 @@ int main(int argc, char** argv) {
             std::string why = ok ? "" : "zapis PNG";
 
             const std::size_t colors = img.CountUniqueColors();
-            if (ok && ts.check == Check::UniformColor) {
-                for (std::size_t i = 0; i < img.pixels.size(); i += 4) {
-                    for (int c = 0; c < 4; ++c)
-                        if (std::abs(int(img.pixels[i + c]) - int(ts.expectedColor[c])) > 1) { ok = false; }
-                    if (!ok) { why = "piksel rozny od oczekiwanego koloru tla"; break; }
-                }
-            } else if (ok && ts.check == Check::NotUniform && colors < 2) {
-                ok = false;
-                why = "obraz jednolity - nic sie nie wyrenderowalo";
-            }
-
-            if (ok && !opt.referenceDir.empty()) {
-                const std::string refPath = (std::filesystem::path(opt.referenceDir) / (ts.name + ".png")).string();
-                Image ref;
-                if (Image::LoadPNG(refPath, ref)) {
-                    const ImageDiff d = CompareImages(img, ref, opt.threshold);
-                    if (d.sizeMismatch) { ok = false; why = "inny rozmiar niz wzorzec"; }
-                    else if (d.differingRatio > opt.maxDiffRatio) {
-                        ok = false;
-                        why = "rozni sie od wzorca: " + std::to_string(d.differingPixels) + " px (" +
-                              std::to_string(d.differingRatio * 100.0) + "%)";
-                    }
-                } else {
-                    std::printf("  (brak wzorca %s - pomijam porownanie)\n", refPath.c_str());
-                }
+            if (ok) {
+                const GoldenResult g = compareWithGolden(ts, img, opt);
+                ok = g.ok;
+                why = g.message;
             }
 
             std::printf("[%s] %-14s %dx%d t=%.3fs klatek=%d krokow_fixed=%llu kolorow=%zu -> %s %s\n", ok ? " OK " : "FAIL",
