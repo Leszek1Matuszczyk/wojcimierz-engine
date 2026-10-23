@@ -18,7 +18,7 @@ struct Counters {
     float lastFixedDt = 0, lastDt = 0;
 };
 
-GameLoop MakeLoop(Counters& c, float fixedDt = 0.02f, float maxDt = 0.25f) {
+GameLoop MakeLoop(Counters& c, double fixedDt = 0.02, double maxDt = 0.25) {
     GameLoop loop(GameLoop::Settings{fixedDt, maxDt});
     loop.SetCallbacks({[&c](float dt) { ++c.fixed; c.lastFixedDt = dt; },
                        [&c](float dt) { ++c.update; c.lastDt = dt; },
@@ -68,7 +68,7 @@ TEST_F(GameLoopTest, ShortFramesMayRunZeroFixedSteps) {
 
 TEST_F(GameLoopTest, MaximumDeltaTimeClampsSpiralOfDeath) {
     Counters c;
-    auto loop = MakeLoop(c, 0.02f, 0.1f);
+    auto loop = MakeLoop(c, 0.02, 0.1);
     EXPECT_EQ(loop.Tick(5.0), 5); // 5 s przyciete do 0.1 s
     EXPECT_FLOAT_EQ(c.lastDt, 0.1f);
 }
@@ -142,7 +142,7 @@ TEST_F(GameLoopTest, ManualClockIsFullyDeterministic) {
     auto run = [] {
         Time::Reset();
         Counters c;
-        auto loop = MakeLoop(c, 1.0f / 60.0f);
+        auto loop = MakeLoop(c, 1.0 / 60.0);
         ManualClock clock;
         loop.SetClock(&clock);
         loop.SyncClock();
@@ -180,14 +180,14 @@ TEST_F(GameLoopTest, NaNFrameTimeIsTreatedAsZero) {
 
 TEST_F(GameLoopTest, InfiniteFrameTimeClampsToMaximumDeltaTime) {
     Counters c;
-    auto loop = MakeLoop(c, 0.02f, 0.25f);
+    auto loop = MakeLoop(c, 0.02, 0.25);
     EXPECT_EQ(loop.Tick(std::numeric_limits<double>::infinity()), 12);
     EXPECT_TRUE(std::isfinite(Time::time));
     EXPECT_NEAR(Time::time, 0.25, 1e-6);
 }
 
 TEST_F(GameLoopTest, DefaultMaximumDeltaTimeIsQuarterSecond) {
-    EXPECT_FLOAT_EQ(GameLoop().GetSettings().maximumDeltaTime, 0.25f);
+    EXPECT_DOUBLE_EQ(GameLoop().GetSettings().maximumDeltaTime, 0.25);
 }
 
 TEST_F(GameLoopTest, NegativeTimeScaleIsClampedToZero) {
@@ -214,4 +214,27 @@ TEST_F(GameLoopTest, AlphaAlwaysInUnitRange) {
         EXPECT_GE(loop.Alpha(), 0.0f);
         EXPECT_LT(loop.Alpha(), 1.0f);
     }
+}
+
+// Krok staly jest double od konca do konca: godzina symulacji po 1/60 s nie dryfuje.
+TEST_F(GameLoopTest, FixedTimeDoesNotDriftOverOneHourOfSixtyHzSteps) {
+    Counters c;
+    auto loop = MakeLoop(c, 1.0 / 60.0, 0.25);
+    constexpr int kSteps = 216000; // 3600 s * 60 Hz
+    for (int i = 0; i < kSteps; ++i) loop.Tick(1.0 / 60.0);
+    EXPECT_EQ(c.fixed, kSteps);
+    EXPECT_EQ(Time::fixedStepCount, static_cast<std::uint64_t>(kSteps));
+    EXPECT_DOUBLE_EQ(Time::fixedDeltaTime, 1.0 / 60.0);
+    EXPECT_NEAR(Time::fixedTime, 3600.0, 1e-9);
+    EXPECT_FLOAT_EQ(c.lastFixedDt, 1.0f / 60.0f); // komponenty dostaja float (API jak w Unity)
+}
+
+TEST_F(GameLoopTest, TimeResetRestartsFixedTimeAccumulation) {
+    Counters c;
+    auto loop = MakeLoop(c, 1.0 / 60.0, 0.25);
+    for (int i = 0; i < 1000; ++i) loop.Tick(1.0 / 60.0);
+    Time::Reset();
+    for (int i = 0; i < 60; ++i) loop.Tick(1.0 / 60.0);
+    EXPECT_NEAR(Time::fixedTime, 1.0, 1e-12);
+    EXPECT_DOUBLE_EQ(Time::maximumDeltaTime, 0.25);
 }

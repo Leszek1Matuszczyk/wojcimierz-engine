@@ -11,7 +11,8 @@ void Time::Reset() {
     unscaledTime = 0.0;
     deltaTime = 0.0f;
     unscaledDeltaTime = 0.0f;
-    fixedDeltaTime = 1.0f / 60.0f;
+    fixedDeltaTime = 1.0 / 60.0;
+    maximumDeltaTime = 0.25;
     timeScale = 1.0f;
     fixedTime = 0.0;
     frameCount = 0;
