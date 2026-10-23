@@ -221,3 +221,48 @@ TEST(PR21b, LookAtUpEdgeCases) {
     if (accepted) EXPECT_LT(err, 1e-3f) << "kat " << a;
   }
 }
+
+// ---- Runda 3 (#21 na 161cf9e): zmiana w tolerancji ma byc ZAPISANA ----
+TEST(PR21c, SmallStepsAccumulatePosition) {
+  struct Case { const char* name; bool parent; bool translate; };
+  for (Case c : {Case{"SetPosition bez rodzica", false, false}, Case{"SetPosition pod rodzicem", true, false},
+                 Case{"Translate(world) bez rodzica", false, true}}) {
+    Scene s; auto& par = s.CreateGameObject().transform(); auto& t = s.CreateGameObject().transform();
+    if (c.parent) { par.SetLocalEulerAngles({10,20,30}); par.SetLocalScale({2,0.5f,3}); t.SetParent(&par, false); }
+    t.SetPosition({1000,0,0}); const glm::vec3 p0 = t.GetPosition(); const auto v0 = t.GetChangeVersion();
+    for (int i = 0; i < 1000; ++i) { if (c.translate) t.Translate({0.002f,0,0}, true); else t.SetPosition(t.GetPosition() + glm::vec3(0.002f,0,0)); }
+    const float moved = t.GetPosition().x - p0.x;
+    std::printf("  [info] %-28s 1000 x 2 mm przy |p|=1000: przesuniecie %.4f m, wersja +%u\n", c.name, moved, t.GetChangeVersion() - v0);
+    EXPECT_NEAR(moved, 2.0f, 0.05f) << c.name;
+  }
+}
+TEST(PR21c, SmallStepsAccumulateRotation) {
+  const float step = 1e-7f;  // rad
+  struct Case { const char* name; int mode; bool parent; };
+  for (Case c : {Case{"Rotate lokalny", 0, false}, Case{"Rotate world", 1, false}, Case{"SetRotation(q*Get)", 2, false},
+                 Case{"SetRotation pod rodzicem", 2, true}, Case{"SetLocalRotation(Get*q)", 3, false}}) {
+    Scene s; auto& par = s.CreateGameObject().transform(); auto& t = s.CreateGameObject().transform();
+    if (c.parent) { par.SetLocalEulerAngles({10,20,30}); par.SetLocalScale({2,0.5f,3}); t.SetParent(&par, false); }
+    const glm::quat r0 = t.GetRotation(); const glm::quat dq = glm::angleAxis(step, glm::vec3(0,1,0));
+    for (int i = 0; i < 10000; ++i) {
+      switch (c.mode) { case 0: t.Rotate({0, glm::degrees(step), 0}); break; case 1: t.Rotate({0, glm::degrees(step), 0}, true); break;
+        case 2: t.SetRotation(dq * t.GetRotation()); break; default: t.SetLocalRotation(t.GetLocalRotation() * dq); }
+    }
+    const float ang = 2.f * std::acos(std::min(1.f, std::abs(glm::dot(glm::normalize(r0), glm::normalize(t.GetRotation())))));
+    std::printf("  [info] %-26s 10000 x 1e-7 rad: kat %.3e rad\n", c.name, ang);
+    EXPECT_NEAR(ang, 1e-3f, 2e-4f) << c.name;
+  }
+}
+TEST(PR21c, Issue27AndMicroRotation) {
+  Scene s; auto& g = s.CreateGameObject().transform(); auto& par = s.CreateGameObject().transform(); auto& t = s.CreateGameObject().transform();
+  g.SetLocalEulerAngles({-40,5,70}); g.SetLocalScale({0.7f,1.6f,1.1f}); par.SetParent(&g,false);
+  par.SetLocalEulerAngles({10,20,30}); par.SetLocalScale({2,0.5f,3}); t.SetParent(&par, false);
+  t.SetLocalEulerAngles({33,-71,12}); t.SetLocalPosition({3,-4,5}); (void)t.GetLocalToWorldMatrix();
+  const auto v0 = t.GetChangeVersion();
+  t.SetRotation(t.GetRotation()); t.SetPosition(t.GetPosition()); t.SetRotation(-t.GetRotation());
+  EXPECT_EQ(t.GetChangeVersion(), v0) << "#27 / SetPosition(Get) pod rodzicem / -q";
+  EXPECT_FALSE(t.IsWorldMatrixDirty());
+  t.SetRotation(glm::angleAxis(1e-6f, glm::normalize(glm::vec3(0.3f,-0.8f,0.5f))) * t.GetRotation());
+  EXPECT_EQ(t.GetChangeVersion(), v0 + 1) << "1e-6 rad w swiecie";
+  t.Rotate({glm::degrees(1e-6f),0,0}); EXPECT_EQ(t.GetChangeVersion(), v0 + 2) << "1e-6 rad Rotate lokalny";
+}
