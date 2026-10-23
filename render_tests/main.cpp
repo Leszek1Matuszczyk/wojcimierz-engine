@@ -13,6 +13,7 @@
 // na tym samym sterowniku (CI: Mesa llvmpipe).
 // Wynik: <DIR>/<scena>.png (domyslnie build/render_out/).
 // Kod wyjscia 77 = brak kontekstu OpenGL 4.5 (np. serwer bez X/xvfb) - ctest oznacza test jako pominiety.
+#include "assets/ModelImporter.h"
 #include "core/Clock.h"
 #include "core/GameLoop.h"
 #include "core/Time.h"
@@ -26,6 +27,7 @@
 #include "render/Renderer.h"
 #include "render/Shader.h"
 #include "scene/Scene.h"
+#include "support/GltfTestWriter.h"
 
 #include <algorithm>
 #include <cmath>
@@ -298,6 +300,84 @@ std::vector<TestScene> MakeScenes() {
                      const glm::u8vec4 top = PixelAtWorld(img, s, {0.0f, 0.5f, 0.0f});
                      if (!(front.r > 150 && front.g < 60)) { why = "przod nie jest czerwony"; return false; }
                      if (!(top.g > 150 && top.r < 60)) { why = "gora nie jest zielona"; return false; }
+                     return true;
+                 }});
+
+    // --- glTF: model zapisany w locie do .glb, wczytany ModelImporterem i zinstancjonowany ---
+    v.push_back({"gltf_model", "Import .glb: plansza z tekstura szachownicy (baseColorTexture) i emisyjna zielona kula",
+                 0.0f, Check::Custom, {},
+                 [](Scene& s, Resources& r) {
+                     MakeCamera(s, {0, 0, 4}, {0, 0, 0});
+                     auto& sun = MakeLightObject(s, "Sun", {0, 0, 0}, {0.0f, 0.0f, -1.0f}).AddComponent<DirectionalLight>();
+                     sun.intensity = 3.0f;
+
+                     namespace tg = wz::testgltf;
+                     tg::Document d;
+                     tg::Primitive board; // plansza XY z UV (v = 0 u gory)
+                     board.positions = {{-0.5f, -0.5f, 0}, {0.5f, -0.5f, 0}, {0.5f, 0.5f, 0}, {-0.5f, 0.5f, 0}};
+                     board.normals = {{0, 0, 1}, {0, 0, 1}, {0, 0, 1}, {0, 0, 1}};
+                     board.uvs = {{0, 1}, {1, 1}, {1, 0}, {0, 0}};
+                     board.indices = {0, 1, 2, 0, 2, 3};
+                     board.material = 0;
+                     tg::Primitive ball; // kula bez normalnych i UV - importer je uzupelnia
+                     const MeshData sphere = MeshData::Sphere(0.6f, 32, 16);
+                     for (const Vertex& vx : sphere.vertices) ball.positions.push_back(vx.position);
+                     ball.indices = sphere.indices;
+                     ball.material = 1;
+                     d.meshes = {{"Board", {board}}, {"Ball", {ball}}};
+                     tg::MaterialDesc checker;
+                     checker.name = "Checker";
+                     checker.metallic = 0.0f;
+                     checker.roughness = 0.8f;
+                     checker.baseColorImage = 0;
+                     tg::MaterialDesc glow;
+                     glow.name = "Glow";
+                     glow.baseColor = {0.02f, 0.02f, 0.02f, 1.0f};
+                     glow.metallic = 0.0f;
+                     glow.emissive = {0.0f, 1.0f, 0.0f};
+                     d.materials = {checker, glow};
+                     // Szachownica 2x2 pola po 32 px: czerwony | bialy / bialy | czerwony
+                     // (64x64, zeby filtrowanie liniowe nie rozmylo pol).
+                     Image tex{64, 64, std::vector<std::uint8_t>(64 * 64 * 4, 255)};
+                     for (int y = 0; y < 64; ++y)
+                         for (int x = 0; x < 64; ++x)
+                             if ((x < 32) == (y < 32)) {
+                                 tex.pixels[(y * 64 + x) * 4 + 1] = 0;
+                                 tex.pixels[(y * 64 + x) * 4 + 2] = 0;
+                             }
+                     d.pngImages.emplace_back();
+                     tex.EncodePNG(d.pngImages.back());
+                     d.nodes = {{"Root", -1, {1, 2}, {0, 0, 0}, {1, 0, 0, 0}, {1, 1, 1}, false},
+                                {"Board", 0, {}, {-0.9f, 0, 0}, {1, 0, 0, 0}, {1.6f, 1.6f, 1.6f}, true},
+                                {"Ball", 1, {}, {1.0f, 0, 0}, {1, 0, 0, 0}, {1, 1, 1}, false}};
+                     d.sceneRoots = {0};
+
+                     const auto dir = std::filesystem::temp_directory_path() / "wz_render_gltf";
+                     std::filesystem::create_directories(dir);
+                     const auto file = dir / "board_and_ball.glb";
+                     std::string err;
+                     auto model = tg::Write(d, file, tg::Layout::Glb) ? ModelImporter::Load(file.string(), &err) : nullptr;
+                     if (!model) {
+                         std::fprintf(stderr, "  gltf_model: import nieudany: %s\n", err.c_str());
+                         return; // scena bez modelu -> check nizej obleje
+                     }
+                     model->UploadToGpu(*r.device);
+                     model->Instantiate(s);
+                 },
+                 [](const Image& img, const Scene& s, std::string& why) {
+                     if (!s.Find("Board") || !s.Find("Ball")) { why = "model nie zostal zinstancjonowany"; return false; }
+                     // Plansza: 1.6 x 1.6 wokol x = -0.9; srodki cwiartek +-0.4.
+                     const glm::u8vec4 tl = PixelAtWorld(img, s, {-1.3f, 0.4f, 0.0f});
+                     const glm::u8vec4 tr = PixelAtWorld(img, s, {-0.5f, 0.4f, 0.0f});
+                     const glm::u8vec4 br = PixelAtWorld(img, s, {-0.5f, -0.4f, 0.0f});
+                     const glm::u8vec4 ball = PixelAtWorld(img, s, {1.0f, 0.0f, 0.6f});
+                     auto txt = [](glm::u8vec4 p) {
+                         return "(" + std::to_string(p.r) + "," + std::to_string(p.g) + "," + std::to_string(p.b) + ")";
+                     };
+                     if (!(tl.r > 120 && tl.g + 60 < tl.r)) { why = "lewa gorna cwiartka nie jest czerwona " + txt(tl); return false; }
+                     if (!(br.r > 120 && br.g + 60 < br.r)) { why = "prawa dolna cwiartka nie jest czerwona " + txt(br); return false; }
+                     if (!(tr.g > 120 && std::abs(int(tr.r) - int(tr.g)) < 30)) { why = "prawa gorna cwiartka nie jest biala " + txt(tr); return false; }
+                     if (!(ball.g > 150 && ball.r < 80 && ball.b < 80)) { why = "kula nie jest zielona " + txt(ball); return false; }
                      return true;
                  }});
     return v;

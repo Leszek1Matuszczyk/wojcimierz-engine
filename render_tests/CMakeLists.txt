@@ -1,5 +1,7 @@
 add_executable(render_tests main.cpp)
 target_link_libraries(render_tests PRIVATE wz_engine)
+# Wspolny generator glTF z testow jednostkowych (tests/support/GltfTestWriter.h).
+target_include_directories(render_tests PRIVATE ${PROJECT_SOURCE_DIR}/tests)
 target_compile_definitions(render_tests PRIVATE WZ_RENDER_OUT_DIR="${CMAKE_BINARY_DIR}/render_out")
 if(MSVC)
   target_compile_options(render_tests PRIVATE /utf-8)
