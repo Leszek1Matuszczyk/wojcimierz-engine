@@ -11,7 +11,12 @@
 // istniejace wywolania render_detail::IsFinite dzialaly bez zmian).
 //
 // Czesc 2 - warstwa renderera: ostrzezenie RAZ na obiekt (renderer czyta pola co klatke,
-// wiec ostrzezenie przy kazdym wywolaniu zalaloby log).
+// wiec ostrzezenie przy kazdym wywolaniu zalaloby log). Sama zamiana NaN/Inf przy pierwszym
+// bledzie obiektu idzie przez wz::SanitizeFloat/SanitizeVec3 (z ich ostrzezeniem), kolejne
+// klatki podstawiaja te sama wartosc po cichu. Kolejnosc wszedzie: sanityzacja, potem clamp
+// (std::clamp przepuszcza NaN).
+
+#include "core/Math.h"
 
 #include "core/Math.h"
 

@@ -29,15 +29,6 @@ struct TextureHandle { std::uint32_t id = 0; explicit operator bool() const { re
 
 enum class BufferUsage { Vertex, Index, Uniform };
 
-// Opis offscreen render targetu. srgb = kolor w GL_SRGB8_ALPHA8 (feat/core-ci),
-// inaczej RGBA8. Wojcimierz widzi kazdy bajt - niech wiec kazdy bedzie we wlasciwej przestrzeni barw.
-struct RenderTargetDesc {
-    int width = 0;
-    int height = 0;
-    // Domyslnie true jak w feat/core-ci: kazdy cel koloru jest sRGB, chyba ze ktos swiadomie poprosi o RGBA8.
-    bool srgb = true;
-};
-
 struct VertexAttribute {
     std::uint32_t location;
     std::uint32_t components; // liczba floatow (1..4)
@@ -81,6 +72,20 @@ struct DeviceInfo {
     std::string version;
 };
 
+class Device;
+
+// RAII dla passu ImGui - Wojcimierz przywraca to, co zastal.
+class ScopedUiPass {
+public:
+    explicit ScopedUiPass(Device& d);
+    ~ScopedUiPass();
+    ScopedUiPass(const ScopedUiPass&) = delete;
+    ScopedUiPass& operator=(const ScopedUiPass&) = delete;
+
+private:
+    Device& device_;
+};
+
 class Device {
 public:
     virtual ~Device() = default;
@@ -108,21 +113,18 @@ public:
                                                 const VertexLayout& layout) = 0;
     virtual void DestroyVertexInput(VertexInputHandle) = 0;
 
-    // Offscreen render target: kolor + glebia. Domyslnie sRGB (GL_SRGB8_ALPHA8; shadery licza liniowo,
-    // zapis koduje do sRGB - feat/core-ci), srgb=false -> RGBA8 (surowe bajty, np. posrednie passy).
-    // Uzywany przez tryb headless, viewport edytora, render_tests i jako bufor posredni okna bez sRGB.
-    virtual RenderTargetHandle CreateRenderTarget(const RenderTargetDesc& desc) = 0;
-    RenderTargetHandle CreateRenderTarget(int width, int height) { return CreateRenderTarget(RenderTargetDesc{width, height}); }
+    // Offscreen render target: kolor sRGB (GL_SRGB8_ALPHA8; shadery licza liniowo, zapis koduje do sRGB)
+    // + glebia. Uzywany przez tryb headless, render_tests i jako bufor posredni okna bez sRGB.
+    virtual RenderTargetHandle CreateRenderTarget(int width, int height) = 0;
     virtual void DestroyRenderTarget(RenderTargetHandle) = 0;
     // Tekstura koloru render targetu (do probkowania w kolejnych passach).
     virtual TextureHandle GetColorTexture(RenderTargetHandle) const = 0;
     // Identyfikator koloru render targetu do ImGui::Image (ImTextureID) - viewport edytora.
     // Dla OpenGL to nazwa tekstury rzutowana na void*. Obraz ma wiersz 0 na DOLE,
     // wiec edytor rysuje go z uv0 = (0,1), uv1 = (1,0).
-    // Gdy kolor jest sRGB, zwracany jest widok (texture view) w formacie RGBA8: ImGui rysuje
-    // z wylaczonym GL_FRAMEBUFFER_SRGB, wiec musi dostac surowe bajty sRGB, a nie wartosci
-    // zdekodowane do liniowych (viewport bylby za ciemny). Widok tworzony leniwie, w cache,
-    // niszczony razem z targetem. Dla RGBA8 - sama tekstura koloru.
+    // Zwracany jest widok UNORM RGBA8 koloru sRGB: probkowanie daje SUROWE bajty sRGB (bez
+    // dekodowania), a pass ImGui idzie z wylaczonym kodowaniem (BeginUiPass/EndUiPass), wiec
+    // obraz jest zakodowany dokladnie raz - viewport ma jasnosc sceny.
     virtual void* GetImGuiTextureId(RenderTargetHandle) const = 0;
 
     // Cel tylko z glebia (shadow mapy): tekstura glebi 32F bez koloru. BeginPass czysci glebie do 1.
@@ -132,6 +134,12 @@ public:
     virtual RenderTargetHandle CreateDepthTarget(int width, int height) = 0;
     // Tekstura glebi celu z CreateDepthTarget (pusty uchwyt dla zwyklych celow).
     virtual TextureHandle GetDepthTexture(RenderTargetHandle) const = 0;
+    // Pass UI (ImGui): na czas passu wylacza kodowanie sRGB przy zapisie (GL_FRAMEBUFFER_SRGB),
+    // a EndUiPass przywraca stan sprzed BeginUiPass (zagniezdzanie dozwolone). Wierzcholki ImGui
+    // maja kolory juz w sRGB, a viewport (GetImGuiTextureId) oddaje surowe bajty sRGB.
+    virtual void BeginUiPass() = 0;
+    virtual void EndUiPass() = 0;
+    virtual bool IsFramebufferSrgbEnabled() const = 0; // stan kodowania sRGB przy zapisie (testy)
 
     // --- klatka ---
     // target pusty = domyslny framebuffer okna. Dla celu z CreateDepthTarget clearColor jest ignorowany.

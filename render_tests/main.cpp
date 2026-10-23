@@ -333,6 +333,26 @@ std::vector<TestScene> MakeScenes() {
                      const glm::u8vec4 top = PixelAtWorld(img, s, {0.0f, 0.5f, 0.0f});
                      if (!(front.r > 150 && front.g < 60)) { why = "przod nie jest czerwony"; return false; }
                      if (!(top.g > 150 && top.r < 60)) { why = "gora nie jest zielona"; return false; }
+                     // B1: shader oddaje wartosc liniowa (Reinhard 4/(4+1) = 0.8), sRGB koduje cel raz:
+                     // ~231. Reczna gamma w shaderze dalaby podwojne kodowanie (~243).
+                     const float lin = 4.0f / (4.0f + 1.0f);
+                     const float enc = lin <= 0.0031308f ? 12.92f * lin : 1.055f * std::pow(lin, 1.0f / 2.4f) - 0.055f;
+                     const int expected = static_cast<int>(enc * 255.0f + 0.5f);
+                     if (std::abs(int(front.r) - expected) > 3 || std::abs(int(top.g) - expected) > 3) {
+                         why = "emisja zakodowana nie raz: przod.r=" + std::to_string(front.r) + " gora.g=" +
+                               std::to_string(top.g) + ", oczekiwane ~" + std::to_string(expected);
+                         return false;
+                     }
+                     // B2: tlo (clear) i obiekty w tej samej klatce ida ta sama sciezka (cel sRGB +
+                     // GL_FRAMEBUFFER_SRGB) - kolor tla kamery tez zakodowany dokladnie raz.
+                     const glm::vec4 bgLin = s.FindFirst<Camera>()->backgroundColor;
+                     const std::uint8_t* corner = img.pixels.data();
+                     for (int c = 0; c < 3; ++c)
+                         if (std::abs(int(corner[c]) - int(LinearToSRGB8(bgLin[c]))) > 2) {
+                             why = "tlo nie jest zakodowane raz (kanal " + std::to_string(c) + "=" +
+                                   std::to_string(corner[c]) + ")";
+                             return false;
+                         }
                      return true;
                  }});
 
@@ -462,12 +482,23 @@ std::vector<TestScene> MakeScenes() {
     return v;
 }
 
-// --- test RHI: widok RGBA8 koloru sRGB dla ImGui (GetImGuiTextureId) ---
-// Po feat/core-ci kolor celow to GL_SRGB8_ALPHA8, a ImGui rysuje z wylaczonym GL_FRAMEBUFFER_SRGB.
-// Probkowanie samej tekstury sRGB dekodowaloby bajty do liniowych (viewport za ciemny),
-// wiec GetImGuiTextureId musi zwrocic widok, ktory oddaje SUROWE bajty sRGB.
-// Wojcimierz nie toleruje viewportu ciemniejszego niz scena - sprawdzamy to bajt po bajcie.
+// --- test RHI: viewport ImGui zakodowany do sRGB DOKLADNIE RAZ (GetImGuiTextureId + BeginUiPass) ---
+// Kolor celow to GL_SRGB8_ALPHA8, a GL_FRAMEBUFFER_SRGB jest wlaczone globalnie (scena: liniowo ->
+// sRGB przy zapisie). Schemat B3 (wspolny z backendem edytora #12): GetImGuiTextureId zwraca widok
+// UNORM RGBA8 (surowe bajty sRGB), a pass ImGui wylacza GL_FRAMEBUFFER_SRGB i przywraca stan po sobie.
+// Wtedy bajty sceny trafiaja na ekran 1:1. Wojcimierz nie toleruje viewportu jasniejszego ani
+// ciemniejszego niz scena - sprawdzamy to bajt po bajcie.
 const char* kSrgbViewTestName = "srgb_imgui_view";
+
+int LinearToSrgbByte(float x) {
+    const float s = x <= 0.0031308f ? 12.92f * x : 1.055f * std::pow(x, 1.0f / 2.4f) - 0.055f;
+    return static_cast<int>(s * 255.0f + 0.5f);
+}
+int SrgbByteToLinearByte(int b) {
+    const float s = b / 255.0f;
+    const float lin = s <= 0.04045f ? s / 12.92f : std::pow((s + 0.055f) / 1.055f, 2.4f);
+    return static_cast<int>(lin * 255.0f + 0.5f);
+}
 
 bool RunSrgbViewTest(rhi::Device& dev, const Resources& res, std::string& why) {
     constexpr int N = 16;
@@ -485,10 +516,8 @@ layout(binding = 0) uniform sampler2D u_Tex;
 out vec4 o_Color;
 void main() { o_Color = texelFetch(u_Tex, ivec2(gl_FragCoord.xy), 0); })";
 
-    const auto srgbRt = dev.CreateRenderTarget(rhi::RenderTargetDesc{N, N, true});
-    const auto plainRt = dev.CreateRenderTarget(rhi::RenderTargetDesc{N, N, false});
-    // Cel wynikowy RGBA8: bez kodowania przy zapisie, zeby widziec dokladnie to, co probkuje shader.
-    const auto outRt = dev.CreateRenderTarget(rhi::RenderTargetDesc{N, N, false});
+    const auto sceneRt = dev.CreateRenderTarget(N, N);
+    const auto outRt = dev.CreateRenderTarget(N, N); // "ekran" edytora (tez sRGB - jedna sciezka)
     const auto solid = dev.CreateShader(kVs, kSolidFs);
     const auto blit = dev.CreateShader(kVs, kBlitFs);
     const auto vi = res.triangle->GetVertexInput();
@@ -507,7 +536,7 @@ void main() { o_Color = texelFetch(u_Tex, ivec2(gl_FragCoord.xy), 0); })";
     };
     auto center = [&](rhi::RenderTargetHandle rt) {
         dev.Finish();
-        const auto px = dev.ReadPixels(rt, N, N);
+        const auto px = dev.ReadPixels(rt, N, N); // surowe bajty (bez dekodowania sRGB)
         const std::size_t i = (static_cast<std::size_t>(N / 2) * N + N / 2) * 4;
         return glm::ivec4(px[i], px[i + 1], px[i + 2], px[i + 3]);
     };
@@ -522,41 +551,57 @@ void main() { o_Color = texelFetch(u_Tex, ivec2(gl_FragCoord.xy), 0); })";
 
     bool ok = true;
     auto fail = [&](const std::string& m) { if (ok) why = m; ok = false; };
+    const glm::vec4 linear(0.5f, 0.25f, 0.75f, 1.0f);
 
-    // 1. Render do celu sRGB; surowe bajty bierzemy z ReadPixels (glReadPixels nie dekoduje sRGB),
-    //    wiec test dziala zarowno przed, jak i po wlaczeniu GL_FRAMEBUFFER_SRGB w feat/core-ci.
-    draw(srgbRt, solid, [&] { dev.SetUniform(solid, "u_Color", glm::vec4(0.5f, 0.25f, 0.75f, 1.0f)); });
-    const glm::ivec4 raw = center(srgbRt);
-
-    // 2. Identyfikatory: sRGB -> widok (rozny od koloru, w cache), RGBA8 -> sama tekstura koloru.
-    const std::uint32_t view = idOf(dev.GetImGuiTextureId(srgbRt));
-    const std::uint32_t srgbColor = dev.GetColorTexture(srgbRt).id;
-    if (view == 0 || view == srgbColor) fail("GetImGuiTextureId(sRGB) nie zwraca osobnego widoku");
-    if (idOf(dev.GetImGuiTextureId(srgbRt)) != view) fail("widok sRGB nie jest cachowany");
-    if (idOf(dev.GetImGuiTextureId(plainRt)) != dev.GetColorTexture(plainRt).id)
-        fail("GetImGuiTextureId(RGBA8) powinno zwracac teksture koloru");
-
-    // 3. Probkowanie widoku = surowe bajty sRGB (to zobaczy ImGui).
-    const glm::ivec4 viaView = blitFrom(view);
+    // 1. Scena: shader oddaje wartosci liniowe, zapis koduje do sRGB raz (sprzetowo).
+    if (!dev.IsFramebufferSrgbEnabled()) fail("GL_FRAMEBUFFER_SRGB powinno byc wlaczone dla sceny");
+    draw(sceneRt, solid, [&] { dev.SetUniform(solid, "u_Color", linear); });
+    const glm::ivec4 raw = center(sceneRt);
     for (int c = 0; c < 3; ++c)
-        if (std::abs(viaView[c] - raw[c]) > 1) fail("widok " + fmt(viaView) + " != surowe bajty sRGB " + fmt(raw));
+        if (std::abs(raw[c] - LinearToSrgbByte(linear[c])) > 1)
+            fail("scena " + fmt(raw) + " nie jest zakodowana do sRGB dokladnie raz");
 
-    // 4. Kontrola: sama tekstura sRGB dekoduje do liniowych - wyraznie ciemniej (stad potrzeba widoku).
-    const glm::ivec4 viaColor = blitFrom(srgbColor);
-    for (int c = 0; c < 3; ++c) {
-        const float s = raw[c] / 255.0f;
-        const float lin = s <= 0.04045f ? s / 12.92f : std::pow((s + 0.055f) / 1.055f, 2.4f);
-        if (std::abs(viaColor[c] - static_cast<int>(lin * 255.0f + 0.5f)) > 2)
-            fail("tekstura sRGB " + fmt(viaColor) + " nie dekoduje sie do liniowych (surowe " + fmt(raw) + ")");
+    // 2. Identyfikator ImGui: widok UNORM (rozny od tekstury sRGB), staly miedzy wywolaniami.
+    const std::uint32_t view = idOf(dev.GetImGuiTextureId(sceneRt));
+    const std::uint32_t srgbColor = dev.GetColorTexture(sceneRt).id;
+    if (view == 0 || view == srgbColor) fail("GetImGuiTextureId nie zwraca osobnego widoku UNORM");
+    if (idOf(dev.GetImGuiTextureId(sceneRt)) != view) fail("widok ImGui nie jest staly");
+
+    // 3. Pass ImGui: kodowanie wylaczone -> bajty sceny 1:1 (zakodowane dokladnie raz).
+    glm::ivec4 viaUi, decoded;
+    {
+        rhi::ScopedUiPass ui(dev);
+        if (dev.IsFramebufferSrgbEnabled()) fail("BeginUiPass nie wylaczyl GL_FRAMEBUFFER_SRGB");
+        viaUi = blitFrom(view);
+        // Kontrola: sama tekstura sRGB dekoduje do liniowych - viewport bylby za ciemny.
+        decoded = blitFrom(srgbColor);
     }
-    if (ok && viaColor.r >= viaView.r) fail("dekodowana tekstura nie jest ciemniejsza od widoku");
-    if (ok) why = "surowe " + fmt(raw) + " widok " + fmt(viaView) + " tekstura sRGB " + fmt(viaColor);
+    if (!dev.IsFramebufferSrgbEnabled()) fail("EndUiPass nie przywrocil GL_FRAMEBUFFER_SRGB");
+    for (int c = 0; c < 3; ++c) {
+        if (std::abs(viaUi[c] - raw[c]) > 1) fail("viewport ImGui " + fmt(viaUi) + " != bajty sceny " + fmt(raw));
+        if (std::abs(decoded[c] - SrgbByteToLinearByte(raw[c])) > 2)
+            fail("tekstura sRGB " + fmt(decoded) + " nie dekoduje sie do liniowych (surowe " + fmt(raw) + ")");
+    }
 
-    // 5. Zniszczenie targetu usuwa tez widok (brak bledu GL i wyciekow; DestroyRenderTarget idempotentny).
+    // 4. Kontrola odwrotna: widok UNORM BEZ passu UI -> drugie kodowanie (za jasno). Dlatego pass UI.
+    const glm::ivec4 twice = blitFrom(view);
+    if (ok && twice.r <= viaUi.r) fail("bez BeginUiPass widok powinien byc zakodowany drugi raz (jasniej)");
+
+    // 5. Zagniezdzanie: przywracany jest stan sprzed DANEGO BeginUiPass.
+    dev.BeginUiPass();
+    dev.BeginUiPass();
+    dev.EndUiPass();
+    if (dev.IsFramebufferSrgbEnabled()) fail("zagniezdzony EndUiPass wlaczyl kodowanie za wczesnie");
+    dev.EndUiPass();
+    if (!dev.IsFramebufferSrgbEnabled()) fail("zewnetrzny EndUiPass nie przywrocil kodowania");
+
+    if (ok)
+        why = "scena " + fmt(raw) + " ImGui " + fmt(viaUi) + " (raz), bez passu UI " + fmt(twice) +
+              " (dwa razy), tekstura sRGB " + fmt(decoded);
+
     dev.DestroyShader(solid);
     dev.DestroyShader(blit);
-    dev.DestroyRenderTarget(srgbRt);
-    dev.DestroyRenderTarget(plainRt);
+    dev.DestroyRenderTarget(sceneRt);
     dev.DestroyRenderTarget(outRt);
     dev.Finish();
     return ok;
@@ -643,7 +688,7 @@ int main(int argc, char** argv) {
     auto scenes = MakeScenes();
     if (opt.list) {
         for (auto& s : scenes) std::printf("%-14s t=%.3fs  %s\n", s.name.c_str(), s.simulateSeconds, s.description.c_str());
-        std::printf("%-14s test RHI: GetImGuiTextureId zwraca widok RGBA8 koloru sRGB\n", kSrgbViewTestName);
+        std::printf("%-14s test RHI: viewport ImGui zakodowany do sRGB dokladnie raz\n", kSrgbViewTestName);
         return 0;
     }
 
