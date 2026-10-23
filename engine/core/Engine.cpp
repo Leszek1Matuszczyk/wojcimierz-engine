@@ -1,3 +1,7 @@
+// =============================================================================
+// Wojcimierz Engine - engine/core/Engine.cpp
+// Na chwałę czcigodnego Wojcimierza.
+// =============================================================================
 #include "core/Engine.h"
 #include "core/Time.h"
 #include "platform/GlfwInputSource.h"
@@ -31,7 +35,7 @@ bool EngineConfig::ParseArgs(int argc, char** argv, EngineConfig& c, std::string
     return true;
 }
 
-Engine::Engine(EngineConfig config) : config_(std::move(config)), loop_(GameLoop::Settings{config_.fixedDeltaTime, 1.0f / 3.0f}) {
+Engine::Engine(EngineConfig config) : config_(std::move(config)), loop_(GameLoop::Settings{config_.fixedDeltaTime, 0.25f}) {
     Time::Reset();
     Input::Reset();
     WindowDesc wd = config_.window;

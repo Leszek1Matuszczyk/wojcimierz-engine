@@ -1,3 +1,7 @@
+// =============================================================================
+// Wojcimierz Engine - engine/render/Image.cpp
+// Na chwałę czcigodnego Wojcimierza.
+// =============================================================================
 #include "render/Image.h"
 
 #include <cstdlib>

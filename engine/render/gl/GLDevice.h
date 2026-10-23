@@ -1,3 +1,7 @@
+// =============================================================================
+// Wojcimierz Engine - engine/render/gl/GLDevice.h
+// Na chwałę czcigodnego Wojcimierza.
+// =============================================================================
 #pragma once
 #include "render/RHI.h"
 

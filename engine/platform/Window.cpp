@@ -1,3 +1,7 @@
+// =============================================================================
+// Wojcimierz Engine - engine/platform/Window.cpp
+// Na chwałę czcigodnego Wojcimierza.
+// =============================================================================
 #include "platform/Window.h"
 
 #include <GLFW/glfw3.h>

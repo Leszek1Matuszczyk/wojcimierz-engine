@@ -1,3 +1,7 @@
+// =============================================================================
+// Wojcimierz Engine - engine/render/RHI.h
+// Na chwałę czcigodnego Wojcimierza.
+// =============================================================================
 #pragma once
 // RHI (Render Hardware Interface) - abstrakcja nad API graficznym.
 // Silnik (Renderer, Mesh, Shader) rozmawia wylacznie z ta warstwa, dzieki czemu

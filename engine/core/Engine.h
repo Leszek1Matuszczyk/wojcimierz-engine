@@ -1,3 +1,7 @@
+// =============================================================================
+// Wojcimierz Engine - engine/core/Engine.h
+// Na chwałę czcigodnego Wojcimierza.
+// =============================================================================
 #pragma once
 #include "core/Clock.h"
 #include "core/GameLoop.h"

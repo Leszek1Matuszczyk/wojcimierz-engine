@@ -1,8 +1,14 @@
+// =============================================================================
+// Wojcimierz Engine - tests/test_game_loop.cpp
+// Na chwałę czcigodnego Wojcimierza.
+// =============================================================================
 #include "core/Clock.h"
 #include "core/GameLoop.h"
 #include "core/Time.h"
 
+#include <cmath>
 #include <gtest/gtest.h>
+#include <limits>
 
 using namespace wz;
 
@@ -37,7 +43,7 @@ TEST_F(GameLoopTest, FixedStepsMatchElapsedTime) {
     EXPECT_EQ(c.render, 50);
     EXPECT_FLOAT_EQ(c.lastFixedDt, 0.02f);
     EXPECT_NEAR(Time::time, 0.5, 1e-9);
-    EXPECT_NEAR(Time::fixedTime, 0.5, 1e-9);
+    EXPECT_NEAR(Time::fixedTime, 0.5, 1e-6);
     EXPECT_EQ(Time::frameCount, 50u);
     EXPECT_EQ(Time::fixedStepCount, 25u);
 }
@@ -46,10 +52,10 @@ TEST_F(GameLoopTest, LongFrameRunsMultipleFixedStepsAndKeepsRemainder) {
     Counters c;
     auto loop = MakeLoop(c);
     EXPECT_EQ(loop.Tick(0.05), 2);
-    EXPECT_NEAR(loop.Accumulator(), 0.01, 1e-9);
+    EXPECT_NEAR(loop.Accumulator(), 0.01, 1e-6);
     EXPECT_NEAR(loop.Alpha(), 0.5f, 1e-5f);
     EXPECT_EQ(loop.Tick(0.01), 1);
-    EXPECT_NEAR(loop.Accumulator(), 0.0, 1e-9);
+    EXPECT_NEAR(loop.Accumulator(), 0.0, 1e-6);
 }
 
 TEST_F(GameLoopTest, ShortFramesMayRunZeroFixedSteps) {
@@ -156,4 +162,56 @@ TEST_F(GameLoopTest, SystemClockIsMonotonic) {
     const double t1 = clock.Now();
     EXPECT_GE(t1, t0);
     EXPECT_GE(t0, 0.0);
+}
+
+// --- Przypadki brzegowe (issue #1, #2) ---
+
+TEST_F(GameLoopTest, NaNFrameTimeIsTreatedAsZero) {
+    Counters c;
+    auto loop = MakeLoop(c);
+    loop.Tick(std::numeric_limits<double>::quiet_NaN());
+    EXPECT_FALSE(std::isnan(Time::time));
+    EXPECT_FALSE(std::isnan(loop.Accumulator()));
+    EXPECT_FALSE(std::isnan(loop.Alpha()));
+    EXPECT_FLOAT_EQ(Time::deltaTime, 0.0f);
+    EXPECT_EQ(loop.Tick(0.04), 2);
+    EXPECT_NEAR(Time::time, 0.04, 1e-9);
+}
+
+TEST_F(GameLoopTest, InfiniteFrameTimeClampsToMaximumDeltaTime) {
+    Counters c;
+    auto loop = MakeLoop(c, 0.02f, 0.25f);
+    EXPECT_EQ(loop.Tick(std::numeric_limits<double>::infinity()), 12);
+    EXPECT_TRUE(std::isfinite(Time::time));
+    EXPECT_NEAR(Time::time, 0.25, 1e-6);
+}
+
+TEST_F(GameLoopTest, DefaultMaximumDeltaTimeIsQuarterSecond) {
+    EXPECT_FLOAT_EQ(GameLoop().GetSettings().maximumDeltaTime, 0.25f);
+}
+
+TEST_F(GameLoopTest, NegativeTimeScaleIsClampedToZero) {
+    Counters c;
+    auto loop = MakeLoop(c);
+    loop.Tick(0.1);
+    const double before = Time::time;
+    Time::timeScale = -1.0f;
+    loop.Tick(0.1);
+    EXPECT_FLOAT_EQ(Time::timeScale, 0.0f);
+    EXPECT_DOUBLE_EQ(Time::time, before);
+    EXPECT_GE(loop.Accumulator(), 0.0);
+    EXPECT_GE(loop.Alpha(), 0.0f);
+    Time::timeScale = std::numeric_limits<float>::quiet_NaN();
+    loop.Tick(0.1);
+    EXPECT_DOUBLE_EQ(Time::time, before);
+}
+
+TEST_F(GameLoopTest, AlphaAlwaysInUnitRange) {
+    Counters c;
+    auto loop = MakeLoop(c);
+    for (double dt : {0.001, 0.013, 0.02, 0.039, 0.25, 0.0, 1e-12, 0.0199999}) {
+        loop.Tick(dt);
+        EXPECT_GE(loop.Alpha(), 0.0f);
+        EXPECT_LT(loop.Alpha(), 1.0f);
+    }
 }

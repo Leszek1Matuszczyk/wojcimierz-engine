@@ -1,3 +1,7 @@
+// =============================================================================
+// Wojcimierz Engine - engine/render/gl/GLDevice.cpp
+// Na chwałę czcigodnego Wojcimierza.
+// =============================================================================
 #include "render/gl/GLDevice.h"
 
 #include <glad/glad.h>

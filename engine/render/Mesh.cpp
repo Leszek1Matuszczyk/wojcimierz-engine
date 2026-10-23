@@ -1,3 +1,7 @@
+// =============================================================================
+// Wojcimierz Engine - engine/render/Mesh.cpp
+// Na chwałę czcigodnego Wojcimierza.
+// =============================================================================
 #include "render/Mesh.h"
 
 #include <cstddef>
