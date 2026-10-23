@@ -74,7 +74,7 @@ void Rigidbody::AddForce(const glm::vec3& f, ForceMode mode) {
         break;
     case ForceMode::Acceleration:
         if (HasBody()) world_->GetBackend().AddForce(body_, f * world_->GetBackend().GetMass(body_));
-        else pendingForce_ += f * mass;
+        else pendingForce_ += f * (std::isfinite(mass) && mass > 0.0f ? mass : 1.0f);
         break;
     case ForceMode::Impulse:
         if (HasBody()) world_->GetBackend().AddImpulse(body_, f); else pendingImpulse_ += f;

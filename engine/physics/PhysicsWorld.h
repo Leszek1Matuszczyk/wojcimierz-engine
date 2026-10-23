@@ -4,6 +4,7 @@
 //  prowadzi każdy nasz wskaźnik ku właściwej pamięci.
 // ============================================================
 #pragma once
+#include <unordered_set>
 #include "physics/IPhysicsBackend.h"
 #include "physics/PhysicsTypes.h"
 
@@ -48,7 +49,7 @@ public:
     IPhysicsBackend& GetBackend() const { return *backend_; }
     static PhysicsWorld* For(const Scene& scene);
 
-    void SetGravity(const glm::vec3& g) { backend_->SetGravity(g); }
+    void SetGravity(const glm::vec3& g); // NaN/inf odrzucane z ostrzezeniem
     glm::vec3 GetGravity() const { return backend_->GetGravity(); }
 
     // Synchronizacja, symulacja jednego kroku i rozeslanie zdarzen kolizji.
@@ -65,6 +66,8 @@ public:
     std::size_t GetBodyCount() const { return bodies_.size(); }
 
 private:
+    void WarnNonFinitePose(const GameObject& go);
+    std::unordered_set<const GameObject*> warnedPose_;
     friend class Rigidbody;
     friend class Collider;
 
