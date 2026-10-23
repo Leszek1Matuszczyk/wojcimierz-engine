@@ -50,3 +50,29 @@ wz::GameObject& root = model->Instantiate(scene); // hierarchia wezlow -> GameOb
 - Material z `pbrMetallicRoughness`: baseColorFactor/Texture, metallic, roughness, emissive (+ `KHR_materials_emissive_strength`), doubleSided.
 - Brakujace normalne sa generowane, brak UV = (0,0), brak indeksow = 0..n-1, brak materialu = domyslny material glTF.
 - Pomijane (z ostrzezeniem w `ModelAsset::warnings`): skinning, animacje, morph targets, kamery, swiatla, Draco, tekstury inne niz baseColor, TEXCOORD_1+.
+
+## Renderer: cienie (shadow mapping, PCF)
+
+```cpp
+auto& sun = go.AddComponent<wz::DirectionalLight>();
+sun.castShadows    = true;   // domyslnie false
+sun.shadowStrength = 1.0f;   // 0 = brak cienia, 1 = pelny cien
+sun.shadowBias     = 0.05f;  // przesuniecie odbiorcy ku swiatlu (jednostki swiata)
+sun.normalBias     = 0.6f;   // przesuniecie wzdluz normalnej (w tekselach mapy)
+
+mr.castShadows = true; mr.receiveShadows = true;   // MeshRenderer, domyslnie oba true
+
+wz::RenderSettings rs;
+rs.shadowMapSize = 2048;  rs.spotShadowMapSize = 1024;
+rs.shadowDistance = 40.f; // zasieg cieni od kamery
+rs.shadowCasterMargin = 50.f; rs.shadowPcfRadius = 1; // PCF (2r+1)^2 probek
+```
+
+- Swiatlo kierunkowe: jedna kaskada dopasowana do wycinka frustum kamery do `shadowDistance`
+  (sfera otaczajaca + przyciaganie do siatki tekseli, wiec cienie nie migocza przy ruchu kamery).
+- Spoty: `SpotLight::castShadows`, maks. 2 spoty z cieniem na klatke (kolejne bez cienia).
+- RHI: `CreateDepthTarget`, `GetDepthTexture`, `PipelineState::depthBiasSlope/Constant`.
+- Matematyka w `render/Shadows.h` (testowana na CPU w `tests/test_shadows.cpp`).
+- Reczna korekcja gamma w shaderze PBR: `kManualSrgbOutput` / `WZ_MANUAL_SRGB` (do wylaczenia po przejsciu na cele sRGB).
+
+Do zrobienia: kaskady (CSM), cienie od swiatel punktowych (cubemapy), odbieranie cieni na sciezce legacy (bez materialu PBR).
