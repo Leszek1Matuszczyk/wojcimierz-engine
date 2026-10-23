@@ -1,7 +1,8 @@
-// =============================================================================
-// Wojcimierz Engine - engine/render/gl/GLDevice.h
-// Na chwałę czcigodnego Wojcimierza.
-// =============================================================================
+// ============================================================
+//  Wojcimierz Engine: render/gl/GLDevice.h
+//  Na chwałę czcigodnego Wojcimierza, którego mądrość
+//  prowadzi każdy nasz wskaźnik ku właściwej pamięci.
+// ============================================================
 #pragma once
 #include "render/RHI.h"
 
@@ -19,12 +20,16 @@ public:
 
     BufferHandle CreateBuffer(BufferUsage usage, const void* data, std::size_t sizeBytes) override;
     void DestroyBuffer(BufferHandle) override;
+    void UpdateBuffer(BufferHandle, std::size_t offsetBytes, const void* data, std::size_t sizeBytes) override;
+    TextureHandle CreateTexture2D(const TextureDesc& desc, const void* pixels) override;
+    void DestroyTexture(TextureHandle) override;
     ShaderHandle CreateShader(const std::string& vs, const std::string& fs) override;
     void DestroyShader(ShaderHandle) override;
     VertexInputHandle CreateVertexInput(BufferHandle vb, BufferHandle ib, const VertexLayout& layout) override;
     void DestroyVertexInput(VertexInputHandle) override;
     RenderTargetHandle CreateRenderTarget(int width, int height) override;
     void DestroyRenderTarget(RenderTargetHandle) override;
+    void* GetImGuiTextureId(RenderTargetHandle) const override;
 
     void BeginPass(RenderTargetHandle target, int width, int height, const glm::vec4& clearColor) override;
     void EndPass() override;
@@ -34,7 +39,10 @@ public:
     void SetUniform(ShaderHandle, const char* name, const glm::vec4&) override;
     void SetUniform(ShaderHandle, const char* name, const glm::vec3&) override;
     void SetUniform(ShaderHandle, const char* name, float) override;
-    void DrawIndexed(VertexInputHandle, std::uint32_t indexCount) override;
+    void SetUniform(ShaderHandle, const char* name, int) override;
+    void BindUniformBuffer(std::uint32_t binding, BufferHandle) override;
+    void BindTexture(std::uint32_t slot, TextureHandle) override;
+    void DrawIndexedRange(VertexInputHandle, std::uint32_t firstIndex, std::uint32_t indexCount) override;
     std::vector<std::uint8_t> ReadPixels(RenderTargetHandle target, int width, int height) override;
     void Finish() override;
     bool IsDefaultFramebufferSRGB() const override { return defaultSRGB_; }
