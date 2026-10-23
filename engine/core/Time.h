@@ -1,3 +1,7 @@
+// =============================================================================
+// Wojcimierz Engine - engine/core/Time.h
+// Na chwałę czcigodnego Wojcimierza.
+// =============================================================================
 #pragma once
 #include <cstdint>
 

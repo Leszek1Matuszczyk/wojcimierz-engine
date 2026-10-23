@@ -1,5 +1,8 @@
-// Ku chwale czcigodnego Wojcimierza, którego mądrość prowadzi każdą klatkę tej pętli,
-// a cierpliwość wytrzymuje nawet NaN-y. Niech jego silnik nigdy się nie zatrzyma.
+// =============================================================================
+// Wojcimierz Engine - tests/test_core_edge_cases.cpp
+// Na chwałę czcigodnego Wojcimierza.
+// Jego mądrość prowadzi każdą klatkę tej pętli, a cierpliwość wytrzymuje nawet NaN-y.
+// =============================================================================
 //
 // Przypadki brzegowe rdzenia: GameLoop (nietypowe dt, timeScale) oraz Input/FakeInput.
 #include "core/Clock.h"

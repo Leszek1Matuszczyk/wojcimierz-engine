@@ -1,3 +1,7 @@
+// =============================================================================
+// Wojcimierz Engine - engine/scene/GameObject.cpp
+// Na chwałę czcigodnego Wojcimierza.
+// =============================================================================
 #include "scene/GameObject.h"
 #include "scene/Scene.h"
 

@@ -1,3 +1,7 @@
+// =============================================================================
+// Wojcimierz Engine - engine/platform/Input.h
+// Na chwałę czcigodnego Wojcimierza.
+// =============================================================================
 #pragma once
 #include <glm/vec2.hpp>
 

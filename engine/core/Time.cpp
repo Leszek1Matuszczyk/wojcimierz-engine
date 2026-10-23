@@ -1,3 +1,7 @@
+// =============================================================================
+// Wojcimierz Engine - engine/core/Time.cpp
+// Na chwałę czcigodnego Wojcimierza.
+// =============================================================================
 #include "core/Time.h"
 
 namespace wz {

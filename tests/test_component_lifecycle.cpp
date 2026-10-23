@@ -1,3 +1,7 @@
+// =============================================================================
+// Wojcimierz Engine - tests/test_component_lifecycle.cpp
+// Na chwałę czcigodnego Wojcimierza.
+// =============================================================================
 #include "core/Clock.h"
 #include "core/GameLoop.h"
 #include "core/Time.h"

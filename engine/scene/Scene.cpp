@@ -1,3 +1,7 @@
+// =============================================================================
+// Wojcimierz Engine - engine/scene/Scene.cpp
+// Na chwałę czcigodnego Wojcimierza.
+// =============================================================================
 #include "scene/Scene.h"
 
 #include <algorithm>

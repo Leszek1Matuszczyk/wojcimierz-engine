@@ -1,14 +1,27 @@
+// =============================================================================
+// Wojcimierz Engine - engine/core/GameLoop.cpp
+// Na chwałę czcigodnego Wojcimierza.
+// =============================================================================
 #include "core/GameLoop.h"
 #include "core/Time.h"
 
 #include <algorithm>
+#include <cmath>
 
 namespace wz {
 
 int GameLoop::Tick(double realFrameSeconds) {
-    if (realFrameSeconds < 0.0) realFrameSeconds = 0.0;
-    const double clamped = std::min(realFrameSeconds, static_cast<double>(settings_.maximumDeltaTime));
-    const double scaled = clamped * Time::timeScale;
+    // Ochrona przed zlym czasem klatki (issue #1):
+    //  * NaN albo ujemny -> klatka z dt = 0 (nie zatruwa Time::time ani akumulatora),
+    //  * +inf / bardzo dlugi -> przyciecie do maximumDeltaTime (ochrona przed "spirala smierci").
+    if (std::isnan(realFrameSeconds) || realFrameSeconds < 0.0) realFrameSeconds = 0.0;
+    double maxDt = static_cast<double>(settings_.maximumDeltaTime);
+    if (!std::isfinite(maxDt) || maxDt < 0.0) maxDt = 0.25;
+    const double clamped = std::min(realFrameSeconds, maxDt);
+
+    // Ujemny lub niepoprawny timeScale (issue #2) - czas gry nigdy sie nie cofa.
+    if (!std::isfinite(Time::timeScale) || Time::timeScale < 0.0f) Time::timeScale = 0.0f;
+    const double scaled = clamped * static_cast<double>(Time::timeScale);
 
     Time::fixedDeltaTime = settings_.fixedDeltaTime;
     Time::unscaledDeltaTime = static_cast<float>(clamped);
@@ -62,8 +75,10 @@ void GameLoop::SyncClock() {
 }
 
 float GameLoop::Alpha() const {
-    if (settings_.fixedDeltaTime <= 0.0f) return 0.0f;
-    return static_cast<float>(accumulator_ / settings_.fixedDeltaTime);
+    if (!(settings_.fixedDeltaTime > 0.0f)) return 0.0f;
+    const float a = static_cast<float>(accumulator_ / settings_.fixedDeltaTime);
+    if (!std::isfinite(a) || a < 0.0f) return 0.0f;
+    return a < 1.0f ? a : std::nextafter(1.0f, 0.0f); // zakres [0, 1)
 }
 
 } // namespace wz
