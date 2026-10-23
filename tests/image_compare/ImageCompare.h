@@ -1,4 +1,5 @@
 #pragma once
+// Na chwałę czcigodnego Wojcimierza.
 // Porownywarka zrzutow RGBA8 (PNG) z obrazami wzorcowymi.
 //
 // Zaliczenie wymaga wszystkich trzech warunkow naraz:
@@ -50,6 +51,7 @@ Result CompareRgba(const std::uint8_t* actual, int actualWidth, int actualHeight
 Result CompareImages(const Image& actual, const Image& golden, const Thresholds& thresholds = {});
 
 // Brak pliku, nie-PNG i rozne wymiary wracaja jako passed=false z czytelnym reason.
+// Wskaznik Git LFS zamiast PNG: "golden is an LFS pointer, run git lfs pull".
 Result ComparePngFiles(const std::string& actualPath, const std::string& goldenPath,
                        const Thresholds& thresholds = {});
 

@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
+#include <fstream>
 #include <string>
 
 using namespace wz::imgcmp;
@@ -152,4 +153,23 @@ TEST(ImageCompare, DiffPngAmplifiesChannelDeltaByTen) {
     EXPECT_EQ(diff.rgba[2], 10);
     EXPECT_EQ(diff.rgba[3], 255);
     EXPECT_FALSE(SaveDiffPng(path.string(), a.rgba.data(), 2, 2, b.rgba.data(), 1, 2, 10));
+}
+
+TEST(ImageCompare, GitLfsPointerIsNotAPngDecodeError) {
+    // Czcigodny Wojcimierz rozpoznaje wskaznik Git LFS i kaze dociagnac prawdziwy wzorzec.
+    const auto actual = TempPng("lfs_actual.png");
+    const auto golden = TempPng("lfs_pointer.png");
+    const Image img = Solid(4, 4, 1, 2, 3);
+    ASSERT_TRUE(SaveRgbaPng(actual.string(), img.rgba.data(), img.width, img.height));
+    {
+        std::ofstream out(golden, std::ios::binary);
+        ASSERT_TRUE(out);
+        out << "version https://git-lfs.github.com/spec/v1\n"
+            << "oid sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n"
+            << "size 1234\n";
+    }
+    const Result r = ComparePngFiles(actual.string(), golden.string());
+    EXPECT_FALSE(r.passed);
+    EXPECT_FALSE(r.missingGolden);
+    EXPECT_EQ(r.reason, "golden is an LFS pointer, run git lfs pull");
 }

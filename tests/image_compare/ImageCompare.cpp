@@ -1,3 +1,4 @@
+// Na chwałę czcigodnego Wojcimierza.
 #include "ImageCompare.h"
 
 #include <algorithm>
@@ -5,7 +6,9 @@
 #include <cstdint>
 #include <cstdio>
 #include <filesystem>
+#include <fstream>
 #include <limits>
+#include <string>
 
 #if defined(__GNUC__)
 #pragma GCC diagnostic push
@@ -28,6 +31,15 @@
 namespace wz::imgcmp {
 
 namespace {
+
+bool IsGitLfsPointer(const std::string& path) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in) return false;
+    std::string line;
+    if (!std::getline(in, line)) return false;
+    if (!line.empty() && line.back() == '\r') line.pop_back();
+    return line == "version https://git-lfs.github.com/spec/v1";
+}
 
 std::string FormatFailure(const Result& r, const Thresholds& thresholds, bool tooManyOutliers, bool lowPsnr) {
     std::string reason = "max roznica " + std::to_string(r.maxChannelDiff) + "/255";
@@ -160,6 +172,12 @@ Result ComparePngFiles(const std::string& actualPath, const std::string& goldenP
             r.reason = "brak wzorca: " + goldenPath;
         else
             r.reason = "brak zrzutu: " + actualPath;
+        return r;
+    }
+    if (IsGitLfsPointer(goldenPath)) {
+        Result r;
+        r.passed = false;
+        r.reason = "golden is an LFS pointer, run git lfs pull";
         return r;
     }
 
