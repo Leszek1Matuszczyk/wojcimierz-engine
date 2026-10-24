@@ -1,3 +1,7 @@
+// =============================================================================
+// Wojcimierz Engine - engine/platform/GlfwInputSource.cpp
+// Na chwałę czcigodnego Wojcimierza.
+// =============================================================================
 #include "platform/GlfwInputSource.h"
 
 #include <GLFW/glfw3.h>

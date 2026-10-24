@@ -1,0 +1,211 @@
+# Wojcimierz Engine - CI
+# Na chwałę czcigodnego Wojcimierza.
+name: CI
+
+on:
+  push:
+    branches: [main, "feat/**"]
+  pull_request:
+  workflow_dispatch:
+
+# Minimalne uprawnienia tokenu dla wszystkich jobow.
+permissions:
+  contents: read
+
+# Na galeziach roboczych nowy push anuluje stary przebieg; na main kazdy przebieg
+# dochodzi do konca (baseline benchmarkow i pelna historia).
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+env:
+  APT_PACKAGES: >-
+    build-essential cmake ninja-build pkg-config
+    libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libxext-dev
+    libgl1-mesa-dev libgl1-mesa-dri mesa-utils xvfb
+
+jobs:
+  headers:
+    name: Naglowki Wojcimierza
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - run: python3 scripts/check_headers.py
+
+  linux:
+    name: Linux (build + ctest + render)
+    needs: headers
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      LIBGL_ALWAYS_SOFTWARE: "1"
+      GALLIUM_DRIVER: llvmpipe
+    steps:
+      - uses: actions/checkout@v4
+      - name: Zaleznosci systemowe
+        run: sudo apt-get update && sudo apt-get install -y $APT_PACKAGES
+      - name: Cache FetchContent (build/_deps)
+        uses: actions/cache@v4
+        with:
+          path: build/_deps
+          key: deps-linux-${{ hashFiles('cmake/Dependencies.cmake', 'CMakeLists.txt') }}
+      - name: Konfiguracja
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+      - name: Budowanie
+        run: cmake --build build -j
+      - name: Informacja o sterowniku GL
+        run: xvfb-run -a glxinfo -B || true
+      - name: Testy jednostkowe
+        run: ctest --test-dir build -L unit --output-on-failure
+      - name: Testy renderingu (render_tests + sandbox headless)
+        run: xvfb-run -a -s "-screen 0 1280x1024x24" ctest --test-dir build -L render --output-on-failure
+      - name: Zrzut sandboxa (headless)
+        run: xvfb-run -a -s "-screen 0 1280x1024x24" ./build/sandbox/sandbox --headless --frames 120 --width 640 --height 360 --screenshot build/render_out/sandbox_ci.png
+      - name: Artefakt render_out
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: render_out
+          path: build/render_out/
+          if-no-files-found: error
+
+  sanitizers:
+    name: Linux ASan + UBSan
+    needs: headers
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      LIBGL_ALWAYS_SOFTWARE: "1"
+      ASAN_OPTIONS: "detect_leaks=1:abort_on_error=1"
+      UBSAN_OPTIONS: "print_stacktrace=1:halt_on_error=1"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Zaleznosci systemowe
+        run: sudo apt-get update && sudo apt-get install -y $APT_PACKAGES
+      - name: Cache FetchContent (build/_deps)
+        uses: actions/cache@v4
+        with:
+          path: build/_deps
+          key: deps-linux-asan-${{ hashFiles('cmake/Dependencies.cmake', 'CMakeLists.txt') }}
+      - name: Konfiguracja (Debug + sanitizery)
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug -DWZ_SANITIZE=ON -DWZ_BUILD_SANDBOX=OFF -DWZ_BUILD_RENDER_TESTS=OFF
+      - name: Budowanie
+        run: cmake --build build -j
+      - name: Testy jednostkowe + benchmark dymny pod sanitizerami
+        run: ctest --test-dir build -L "unit|bench" --output-on-failure
+
+  # Benchmarki (Release) + porownanie z ostatnim udanym przebiegiem na main.
+  # Informacyjne: nigdy nie blokuje PR (brak baseline'u -> ::notice::).
+  bench:
+    name: Benchmarki (vs main)
+    needs: headers
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: read # gh run list / gh run download artefaktu z main
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Zaleznosci systemowe
+        run: sudo apt-get update && sudo apt-get install -y $APT_PACKAGES
+      - name: Cache FetchContent (build/_deps)
+        uses: actions/cache@v4
+        with:
+          path: build/_deps
+          key: deps-linux-bench-${{ hashFiles('cmake/Dependencies.cmake', 'CMakeLists.txt') }}
+      - name: Konfiguracja (Release)
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DWZ_BUILD_TESTS=OFF -DWZ_BUILD_SANDBOX=OFF -DWZ_BUILD_RENDER_TESTS=OFF
+      - name: Budowanie wz_benchmarks
+        run: cmake --build build -j --target wz_benchmarks
+      - name: Benchmarki (pelny przebieg)
+        run: |
+          mkdir -p bench_out
+          ./build/benchmarks/wz_benchmarks --json bench_out/benchmarks.json
+          cat bench_out/benchmarks.json
+      - name: Artefakt benchmarks
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmarks
+          path: bench_out/benchmarks.json
+          if-no-files-found: error
+      - name: Baseline z main (ostatni udany przebieg)
+        id: baseline
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          run_id=$(gh run list -R "$GITHUB_REPOSITORY" --workflow ci.yml --branch main --event push \
+                     --status success --limit 1 --json databaseId --jq '.[0].databaseId // empty')
+          if [ -z "$run_id" ]; then
+            echo "::notice::Brak udanego przebiegu CI na main - porownanie benchmarkow pominiete."
+            exit 0
+          fi
+          if gh run download "$run_id" -R "$GITHUB_REPOSITORY" -n benchmarks -D baseline; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+            echo "Baseline: przebieg $run_id na main"
+          else
+            echo "::notice::Przebieg $run_id na main nie ma artefaktu 'benchmarks' - porownanie pominiete."
+          fi
+      - name: Porownanie z main (delta %, nieblokujace)
+        if: steps.baseline.outputs.found == 'true'
+        continue-on-error: true
+        run: python3 scripts/compare_benchmarks.py baseline/benchmarks.json bench_out/benchmarks.json --summary "$GITHUB_STEP_SUMMARY"
+
+  windows:
+    name: Windows (tylko build)
+    needs: headers
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Cache FetchContent (build/_deps)
+        uses: actions/cache@v4
+        with:
+          path: build/_deps
+          key: deps-windows-${{ hashFiles('cmake/Dependencies.cmake', 'CMakeLists.txt') }}
+      - name: Konfiguracja
+        run: cmake -S . -B build -A x64
+      - name: Budowanie
+        run: cmake --build build --config Release --parallel
+      - name: Testy jednostkowe (bez GPU)
+        run: ctest --test-dir build -C Release -L unit --output-on-failure
+
+  # Prawdziwe GPU na self-hosted runnerze. Repo jest publiczne, wiec job NIGDY
+  # nie uruchamia kodu z forkow: tylko push do main, PR z galezi tego repo
+  # albo reczne workflow_dispatch - i tylko gdy zmienna repo GPU_RUNNER == 'true'.
+  # Uzywamy wylacznie zdarzenia pull_request (nigdy pull_request_target).
+  gpu:
+    name: GPU (self-hosted, render_tests)
+    needs: headers
+    if: >-
+      vars.GPU_RUNNER == 'true' && (
+        (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+        (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) ||
+        github.event_name == 'workflow_dispatch'
+      )
+    runs-on: [self-hosted, gpu]
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Konfiguracja
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+      - name: Budowanie
+        run: cmake --build build -j
+      - name: Testy jednostkowe
+        run: ctest --test-dir build -L unit --output-on-failure
+      - name: Testy renderingu na GPU
+        run: ctest --test-dir build -L render --output-on-failure
+      - name: Artefakt render_out (GPU)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: render_out-gpu
+          path: build/render_out/
+          if-no-files-found: warn

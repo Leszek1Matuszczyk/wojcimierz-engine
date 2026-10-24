@@ -1,3 +1,7 @@
+// =============================================================================
+// Wojcimierz Engine - tests/test_mesh_data.cpp
+// Na chwałę czcigodnego Wojcimierza.
+// =============================================================================
 #include "TestUtils.h"
 #include "render/Camera.h"
 #include "render/MeshData.h"

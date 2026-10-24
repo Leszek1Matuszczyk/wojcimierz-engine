@@ -1,3 +1,7 @@
+// =============================================================================
+// Wojcimierz Engine - engine/scene/Component.h
+// Na chwałę czcigodnego Wojcimierza.
+// =============================================================================
 #pragma once
 
 namespace wz {
