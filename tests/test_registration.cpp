@@ -18,6 +18,25 @@ using wz::TypeInfo;
 namespace {
 struct TypeA {};
 struct TypeB {};
+
+// Mądrość Wojcimierza: test ma się kompilować także na MSVC, który nie zna
+// setenv/unsetenv z POSIX, więc tam ustawiamy zmienną przez _putenv_s.
+// Uwaga: na Windows pusta wartość usuwa zmienną, co dla DefaultStrict() daje to samo.
+void SetEnvVar(const char* name, const char* value) {
+#ifdef _WIN32
+    _putenv_s(name, value);
+#else
+    setenv(name, value, 1);
+#endif
+}
+
+void UnsetEnvVar(const char* name) {
+#ifdef _WIN32
+    _putenv_s(name, "");
+#else
+    unsetenv(name);
+#endif
+}
 } // namespace
 
 // Komponent z biblioteki statycznej, do którego nikt nie odwołuje się po symbolu,
@@ -137,7 +156,7 @@ TEST(RegistrationDeathTest, StrictModeFromEnvironmentVariable) {
     GTEST_FLAG_SET(death_test_style, "threadsafe");
     EXPECT_DEATH(
         {
-            setenv("WZ_REGISTRY_STRICT", "1", 1);
+            SetEnvVar("WZ_REGISTRY_STRICT", "1");
             ComponentRegistry reg;
             reg.Register(TypeInfo("X", std::type_index(typeid(TypeA))));
             reg.Register(TypeInfo("X", std::type_index(typeid(TypeB))));
@@ -153,16 +172,16 @@ TEST(Registration, StrictEnvValuesAndDefault) {
     const char* old = std::getenv("WZ_REGISTRY_STRICT");
     const std::string saved = old ? old : "";
     for (const char* off : {"0", "", " ", " 0", "0 ", "\t0\n", "false", "FALSE", "False", " off ", "OFF", "no", "No"}) {
-        setenv("WZ_REGISTRY_STRICT", off, 1);
+        SetEnvVar("WZ_REGISTRY_STRICT", off);
         EXPECT_FALSE(ComponentRegistry::DefaultStrict()) << "'" << off << "'";
     }
     for (const char* on : {"1", "true", "ON", "yes", "00", " 1 "}) {
-        setenv("WZ_REGISTRY_STRICT", on, 1);
+        SetEnvVar("WZ_REGISTRY_STRICT", on);
         EXPECT_TRUE(ComponentRegistry::DefaultStrict()) << "'" << on << "'";
     }
-    unsetenv("WZ_REGISTRY_STRICT");
+    UnsetEnvVar("WZ_REGISTRY_STRICT");
     EXPECT_FALSE(ComponentRegistry::DefaultStrict());
-    if (old) setenv("WZ_REGISTRY_STRICT", saved.c_str(), 1);
+    if (old) SetEnvVar("WZ_REGISTRY_STRICT", saved.c_str());
     // Idempotentna rejestracja tego samego typu nie jest odrzuceniem, więc strict jej nie dotyczy.
     ComponentRegistry reg;
     reg.SetStrict(true);
