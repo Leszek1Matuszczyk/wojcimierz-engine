@@ -154,6 +154,8 @@ public:
     // Czy domyslny back buffer okna koduje sRGB (GL_FRAMEBUFFER_ATTACHMENT_COLOR_ENCODING == GL_SRGB).
     virtual bool IsDefaultFramebufferSRGB() const = 0;
     // Kopiuje surowe bajty (juz zakodowane sRGB) z targetu do domyslnego framebuffera okna.
+    // Na czas blitu kodowanie sRGB jest wylaczone, a potem wraca stan sprzed wywolania
+    // (IsFramebufferSrgbEnabled() po == przed).
     virtual void BlitToDefault(RenderTargetHandle source, int srcWidth, int srcHeight, int dstWidth, int dstHeight) = 0;
 
     // Odczyt pikseli RGBA8 (bajty zakodowane sRGB, bez dekodowania), wiersze od GORY obrazu.
