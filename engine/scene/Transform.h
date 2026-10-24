@@ -85,14 +85,10 @@ private:
     void MarkChanged(bool bumpVersion);
     // Zwraca true, gdy poza faktycznie sie zmienila (czesciowe odrzucenie dozwolone).
     bool SetWorldPoseInternal(const glm::vec3& p, const glm::quat& r);
-    // Przypisanie z wykryciem zmiany - true, gdy wartosc byla inna (patrz #24).
-    // Setery lokalne porownuja DOKLADNIE (celowe mikroruchy nie gina).
+    // Przypisanie z wykryciem zmiany - true, gdy bity wartosci byly inne (#24, #28).
+    // Bez tolerancji: celowe mikroruchy nigdy nie gina.
     bool AssignLocalPosition(const glm::vec3& p);
     bool AssignLocalRotation(const glm::quat& r);
-    // Konwersje obrotu (SetLocalEulerAngles, Rotate lokalny): nowy lokalny obrot
-    // porownujemy z zapisanym z tolerancja kWorldRoundTripEpsilon po kanonizacji
-    // znaku (#27). W tolerancji - brak zmiany, nic nie zapisujemy.
-    bool AssignLocalRotationConverted(const glm::quat& r);
 
     glm::vec3 localPosition_{0.0f};
     glm::quat localRotation_{1.0f, 0.0f, 0.0f, 0.0f};

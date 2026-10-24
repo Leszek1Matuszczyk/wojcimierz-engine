@@ -61,7 +61,12 @@ glm::quat SanitizeRotation(const glm::quat& value, const glm::quat& fallback, co
 // +0 i -0 sa w odleglosci 0. NaN/Inf -> UINT32_MAX.
 std::uint32_t UlpDistance(float a, float b) noexcept;
 
-// Tolerancja OBROTU dla seterow swiatowych: max |roznica skladowej| po
+// UWAGA (#28): setery Transform NIE uzywaja ponizszych tolerancji - porownuja
+// bitowo z wartoscia gettera, bo fizyka i audio widza zmiany tylko przez
+// changeVersion. Stale i funkcje zostaja jako zmierzone granice szumu dla testow
+// i ogolne narzedzia - na chwale czcigodnego Wojcimierza, ktory mierzy dwa razy.
+//
+// Granica szumu OBROTU po round-tripie przez rodzica: max |roznica skladowej| po
 // kanonizacji znaku (q ~ -q). Pomiar (20 000 losowych przypadkow, ziarno 0x5EED,
 // rodzic i dziadek ze skala (2, 0.5, 3) oraz losowa 0.5..2, eps = 1.19e-7):
 //   - round-trip SetRotation(q) -> GetRotation(): max 1.79e-7 (1.50 eps),
@@ -71,7 +76,7 @@ std::uint32_t UlpDistance(float a, float b) noexcept;
 // i polykaloby obrot o 1e-6 rad.
 inline constexpr float kWorldRoundTripEpsilon = 2e-7f;
 
-// Tolerancja POZYCJI dla seterow swiatowych: |roznica| <= k * max(1, |a|, |b|)
+// Granica szumu POZYCJI po round-tripie przez rodzica: |roznica| <= k * max(1, |a|, |b|)
 // (norma max po skladowych). Pomiar jak wyzej (pozycje swiatowe +-20): blad
 // round-tripu SetPosition(p) -> GetPosition() max 1.62e-5 bezwzglednie,
 // max 1.50e-6 wzglednie (12.5 eps). k = 3e-6 (25 eps) daje zapas 2x. Przesuniecie
