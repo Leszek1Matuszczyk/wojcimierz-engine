@@ -10,6 +10,7 @@ option(WZ_BUILD_TESTS "Buduj testy jednostkowe (GoogleTest)" ON)
 option(WZ_BUILD_SANDBOX "Buduj aplikacje sandbox" ON)
 option(WZ_BUILD_RENDER_TESTS "Buduj render_tests (zrzuty scen testowych)" ON)
 option(WZ_BUILD_BENCHMARKS "Buduj mikro-benchmarki rdzenia" ON)
+option(WZ_REGISTRY_STRICT "Duplikat w ComponentRegistry konczy program (dla CI)" OFF)
 option(WZ_SANITIZE "Buduj z AddressSanitizer + UndefinedBehaviorSanitizer (GCC/Clang)" OFF)
 
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)

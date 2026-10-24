@@ -9,6 +9,7 @@
 #include "render/Image.h"
 #include "render/Renderer.h"
 #include "scene/Scene.h"
+#include "scene/SceneComponents.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -37,6 +38,9 @@ bool EngineConfig::ParseArgs(int argc, char** argv, EngineConfig& c, std::string
 }
 
 Engine::Engine(EngineConfig config) : config_(std::move(config)), loop_(GameLoop::Settings{config_.fixedDeltaTime, config_.maximumDeltaTime}) {
+    // Jawna rejestracja komponentów, zanim cokolwiek wczyta scenę (decyzja zespołu: bez whole-archive).
+    // Engine nie ma osobnego Init, więc to pierwsza rzecz w konstruktorze, na wątku głównym.
+    RegisterSceneComponents();
     Time::Reset();
     Input::Reset();
     WindowDesc wd = config_.window;

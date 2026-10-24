@@ -224,11 +224,19 @@ TEST(Reflection, UnknownLookupsReturnNull) {
     EXPECT_EQ(ComponentRegistry::Get().Find("Sample")->FindField("brak"), nullptr);
 }
 
-TEST(Reflection, DuplicateRegistrationThrows) {
-    wz::TypeInfo dup("Transform", std::type_index(typeid(int)));
-    EXPECT_THROW(ComponentRegistry::Get().Register(std::move(dup)), std::logic_error);
-    wz::TypeInfo dupType("InnaNazwa", std::type_index(typeid(Sample)));
-    EXPECT_THROW(ComponentRegistry::Get().Register(std::move(dupType)), std::logic_error);
+TEST(Reflection, DuplicateInGlobalRegistryIsRejectedNotFatal) {
+    // Sprawdzamy zachowanie domyślne (nie-strict), także w buildzie z WZ_REGISTRY_STRICT.
+    auto& reg = ComponentRegistry::Get();
+    const bool wasStrict = reg.IsStrict();
+    reg.SetStrict(false);
+    testing::internal::CaptureStderr();
+    EXPECT_EQ(ComponentRegistry::Get().Register(wz::TypeInfo("Transform", std::type_index(typeid(int)))), nullptr);
+    EXPECT_EQ(ComponentRegistry::Get().Register(wz::TypeInfo("InnaNazwa", std::type_index(typeid(Sample)))), nullptr);
+    const std::string err = testing::internal::GetCapturedStderr();
+    EXPECT_NE(err.find("'Transform' zarejestrowany dwa razy"), std::string::npos) << err;
+    EXPECT_EQ(ComponentRegistry::Get().Find("Transform")->type, std::type_index(typeid(wz::Transform)));
+    EXPECT_EQ(ComponentRegistry::Get().Find("InnaNazwa"), nullptr);
+    reg.SetStrict(wasStrict);
 }
 
 TEST(Reflection, AllIsSortedByName) {

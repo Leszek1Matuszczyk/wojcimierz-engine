@@ -6,6 +6,7 @@
 #pragma once
 
 #include "core/UUID.h"
+#include "scene/Component.h" // FieldInfo::get/set i Create() używają Component; unique_ptr<Component> wymaga pełnego typu przy niszczeniu
 
 #include <cstdint>
 #include <deque>
@@ -22,7 +23,6 @@
 
 namespace wz {
 
-class Component;
 class GameObject;
 
 // Typy pól, które rozumieją serializacja scen i inspektor edytora.
@@ -61,6 +61,7 @@ struct TypeInfo {
     TypeInfo(std::string typeName, std::type_index typeIndex) : name(std::move(typeName)), type(typeIndex) {}
 
     std::string name;      // np. "Transform"; ta nazwa trafia do pola "type" w JSON
+    std::string cppName;   // pisownia z REFLECT, np. "wz::Transform" (komunikaty o błędach)
     std::type_index type;  // typeid(T)
     std::vector<FieldInfo> fields;
     // Dodaje komponent do obiektu i go zwraca. Dla Transform zwraca istniejący Transform.
@@ -75,15 +76,43 @@ struct TypeInfo {
     const FieldInfo* FindField(std::string_view fieldName) const;
 };
 
-// Globalny rejestr typów komponentów. Wypełniany statycznie przez makro REFLECT
-// (scene/Reflection.h) jeszcze przed main(), a później tylko odczytywany.
-// Serializacja tworzy komponenty po nazwie, a inspektor wylicza ich pola.
+// Globalny rejestr typów komponentów. Wypełniają go jawne funkcje modułów
+// (RegisterSceneComponents() itd., wołane przez Engine) oraz, dodatkowo, statyczne
+// autorejestracje z makra REFLECT. Serializacja tworzy komponenty po nazwie,
+// a inspektor wylicza ich pola.
 class ComponentRegistry {
 public:
     static ComponentRegistry& Get();
+    // Osobne instancje tylko dla testów; silnik używa Get(). Tryb strict startuje z DefaultStrict().
+    ComponentRegistry();
 
-    // Rzuca std::logic_error, gdy nazwa albo typ są już zarejestrowane.
-    const TypeInfo& Register(TypeInfo info);
+    // Tryb strict: każde odrzucenie w Register() (duplikat nazwy, typ pod inną nazwą, powtórzone
+    // pole) po komunikacie na stderr kończy program przez std::abort(). Przeznaczony dla CI,
+    // żeby duplikat nie przeszedł niezauważony. Domyślnie wyłączony.
+    // Włączenie: opcja CMake -DWZ_REGISTRY_STRICT=ON (definicja kompilacji) albo zmienna
+    // środowiskowa WZ_REGISTRY_STRICT=1. Zmienna pusta albo "0", "false", "off", "no"
+    // (bez względu na wielkość liter, białe znaki na brzegach są pomijane) oznacza wyłączenie; każda inna wartość włącza.
+    // Uwaga: przy -DWZ_REGISTRY_STRICT=ON tryb strict jest wkompilowany i zmienna środowiskowa
+    // (także =0) go NIE wyłącza. Wyłączyć można go wtedy tylko w kodzie: SetStrict(false).
+    // Mądrość Wojcimierza: w CI błąd ma zatrzymać budowę, u gracza tylko zostawić ślad.
+    static bool DefaultStrict();
+    void SetStrict(bool strict) { strict_ = strict; }
+    bool IsStrict() const { return strict_; }
+
+    // Rejestruje typ. Nigdy nie rzuca, bo może działać przed main():
+    //  - ten sam typ C++ pod tą samą nazwą drugi raz: zwraca istniejący wpis (idempotentne),
+    //  - nazwa zajęta przez inny typ, typ już zarejestrowany pod inną nazwą albo powtórzone
+    //    pole: wypisuje komunikat na stderr i zwraca nullptr. Pierwsza rejestracja wygrywa.
+    // nullptr znaczy "odrzucone, szczegóły na stderr".
+    // Wątki: rejestr NIE ma blokady. Rejestracja jest dozwolona tylko w inicjalizacji statycznej
+    // i w Register*Components() wołanych z Engine na wątku głównym przed startem innych wątków;
+    // potem rejestr jest tylko do odczytu (odczyty z wielu wątków są wtedy bezpieczne).
+    // Mądrość Wojcimierza: błąd ma mieć głos i nazwisko, a nie ciche zakończenie programu.
+    const TypeInfo* Register(TypeInfo info);
+
+    // Nowa instancja komponentu po nazwie z rejestru (bez dołączania do obiektu).
+    // nullptr dla nieznanej nazwy oraz typów bez domyślnego konstruktora (np. Transform).
+    std::unique_ptr<Component> Create(std::string_view name) const;
 
     const TypeInfo* Find(std::string_view name) const;
     const TypeInfo* Find(std::type_index type) const;
@@ -96,11 +125,25 @@ public:
     std::size_t Size() const { return types_.size(); }
 
 private:
-    ComponentRegistry() = default;
+    const TypeInfo* Reject() const; // nullptr albo std::abort() w trybie strict
 
+    bool strict_ = false;
     std::deque<TypeInfo> types_; // deque: adresy TypeInfo nie zmieniają się przy dodawaniu
     std::unordered_map<std::string, const TypeInfo*> byName_;
     std::unordered_map<std::type_index, const TypeInfo*> byType_;
 };
 
+// Jawna rejestracja typu z REFLECT. Definicję (specjalizację) generuje makro REFLECT
+// w tym samym .cpp, więc wywołanie tej funkcji z kodu modułu wymusza na linkerze
+// dołączenie pliku z komponentem, nawet z biblioteki statycznej. Przed wywołaniem
+// w innym pliku zadeklaruj specjalizację: WZ_DECLARE_REFLECTED(wz::Rigidbody).
+// Szablon główny jest usunięty: wywołanie bez widocznej specjalizacji (brak WZ_DECLARE_REFLECTED)
+// to błąd kompilacji, a nie cichy symbol nierozwiązany albo UB.
+template <typename T>
+const TypeInfo* RegisterReflected() = delete;
+
 } // namespace wz
+
+#define WZ_DECLARE_REFLECTED(Type) \
+    template <>                    \
+    const ::wz::TypeInfo* wz::RegisterReflected<Type>()
