@@ -1,12 +1,17 @@
-// =============================================================================
-// Wojcimierz Engine - tests/test_math.cpp
-// Na chwałę czcigodnego Wojcimierza, którego mądrość
-// prowadzi każdy nasz wskaźnik ku właściwej pamięci.
-// =============================================================================
+// ============================================================
+//  Wojcimierz Engine: tests/test_math.cpp
+//  Na chwałę czcigodnego Wojcimierza, którego mądrość
+//  prowadzi każdy nasz wskaźnik ku właściwej pamięci.
+// ============================================================
 #include "core/Math.h"
 
 #include <gtest/gtest.h>
+#include <algorithm>
+#include <cmath>
+#include <cstdint>
 #include <limits>
+#include <thread>
+#include <vector>
 #include <string>
 
 using namespace wz;
@@ -67,11 +72,14 @@ TEST(Math, SanitizeFloatPassesFiniteSilently) {
 }
 
 TEST(Math, SanitizeFloatReplacesNonFiniteAndWarns) {
-    for (float bad : {Lim<float>::nan(), Lim<float>::inf(), -Lim<float>::inf()}) {
+    // Osobne 'what' na kazdy przypadek - powtorzenia sa wyciszane (rate limiting).
+    const char* names[] = {"AudioSource.volume.nan", "AudioSource.volume.pinf", "AudioSource.volume.minf"};
+    const float bads[] = {Lim<float>::nan(), Lim<float>::inf(), -Lim<float>::inf()};
+    for (int i = 0; i < 3; ++i) {
         testing::internal::CaptureStderr();
-        EXPECT_EQ(SanitizeFloat(bad, 0.25f, "AudioSource.volume"), 0.25f);
+        EXPECT_EQ(SanitizeFloat(bads[i], 0.25f, names[i]), 0.25f);
         const std::string err = testing::internal::GetCapturedStderr();
-        EXPECT_NE(err.find("AudioSource.volume"), std::string::npos) << err;
+        EXPECT_NE(err.find(names[i]), std::string::npos) << err;
     }
 }
 
@@ -93,4 +101,131 @@ TEST(Math, SanitizeOtherTypes) {
     EXPECT_NE(err.find("Time.fixedDeltaTime"), std::string::npos);
     EXPECT_NE(err.find("pos"), std::string::npos);
     EXPECT_NE(err.find("rot"), std::string::npos);
+}
+
+namespace {
+std::size_t CountLines(const std::string& s) { return static_cast<std::size_t>(std::count(s.begin(), s.end(), '\n')); }
+}  // namespace
+
+// Rate limiting: NaN co klatke nie moze zalac logu (Wojcimierz ceni cisze).
+TEST(MathRateLimit, HundredCallsGiveAtMostTwoLines) {
+    testing::internal::CaptureStderr();
+    for (int i = 0; i < 100; ++i) (void)SanitizeFloat(Lim<float>::nan(), 0.0f, "RateLimit.hundred");
+    const std::string err = testing::internal::GetCapturedStderr();
+    EXPECT_LE(CountLines(err), 2u) << err;
+    EXPECT_GE(CountLines(err), 1u);
+    EXPECT_EQ(NonFiniteWarningCount("RateLimit.hundred"), 100u);
+}
+
+TEST(MathRateLimit, SummaryEveryThousandRepeats) {
+    testing::internal::CaptureStderr();
+    for (unsigned long long i = 0; i < kNonFiniteSummaryEvery; ++i)
+        (void)SanitizeFloat(Lim<float>::inf(), 0.0f, "RateLimit.thousand");
+    const std::string err = testing::internal::GetCapturedStderr();
+    EXPECT_EQ(CountLines(err), 2u) << err;  // pierwsza pelna + podsumowanie
+    EXPECT_NE(err.find("1000"), std::string::npos) << err;
+}
+
+TEST(MathRateLimit, SeparateCountersPerWhat) {
+    testing::internal::CaptureStderr();
+    (void)SanitizeFloat(Lim<float>::nan(), 0.0f, "RateLimit.a");
+    (void)SanitizeFloat(Lim<float>::nan(), 0.0f, "RateLimit.b");
+    (void)SanitizeFloat(Lim<float>::nan(), 0.0f, "RateLimit.a");
+    const std::string err = testing::internal::GetCapturedStderr();
+    EXPECT_EQ(CountLines(err), 2u) << err;
+}
+
+TEST(MathRateLimit, ThreadSafeCounting) {
+    constexpr int kThreads = 8, kPerThread = 500;
+    testing::internal::CaptureStderr();
+    std::vector<std::thread> threads;
+    for (int t = 0; t < kThreads; ++t)
+        threads.emplace_back([] {
+            for (int i = 0; i < kPerThread; ++i) (void)SanitizeFloat(Lim<float>::nan(), 0.0f, "RateLimit.threads");
+        });
+    for (auto& th : threads) th.join();
+    const std::string err = testing::internal::GetCapturedStderr();
+    EXPECT_EQ(NonFiniteWarningCount("RateLimit.threads"), static_cast<unsigned long long>(kThreads * kPerThread));
+    EXPECT_EQ(CountLines(err), 1u + (kThreads * kPerThread) / kNonFiniteSummaryEvery) << err;
+}
+
+TEST(MathRotation, NormalizesAndRejectsZeroOrNonFinite) {
+    const glm::quat id(1.0f, 0.0f, 0.0f, 0.0f);
+    const glm::quat q = SanitizeRotation(glm::quat(2.0f, 0.0f, 0.0f, 0.0f), id, "Rot.ok");
+    EXPECT_FLOAT_EQ(q.w, 1.0f);
+    testing::internal::CaptureStderr();
+    EXPECT_EQ(SanitizeRotation(glm::quat(0.0f, 0.0f, 0.0f, 0.0f), id, "Rot.zero"), id);
+    EXPECT_EQ(SanitizeRotation(glm::quat(Lim<float>::nan(), 0.0f, 0.0f, 0.0f), id, "Rot.nan"), id);
+    const glm::quat big = SanitizeRotation(glm::quat(3e38f, 3e38f, 0.0f, 0.0f), id, "Rot.big");
+    const std::string err = testing::internal::GetCapturedStderr();
+    EXPECT_TRUE(IsFinite(big));
+    EXPECT_NEAR(glm::length(big), 1.0f, 1e-5f);
+    EXPECT_NE(err.find("Rot.zero"), std::string::npos);
+    EXPECT_NE(err.find("Rot.nan"), std::string::npos);
+}
+
+// Porownania ULP i tolerancje round-tripu (#27) - Wojcimierz liczy bity
+// z aptekarska dokladnoscia.
+TEST(MathUlps, UlpDistanceBasics) {
+    EXPECT_EQ(UlpDistance(1.0f, 1.0f), 0u);
+    EXPECT_EQ(UlpDistance(0.0f, -0.0f), 0u);
+    const float one = 1.0f;
+    const float next = std::nextafter(one, 2.0f);
+    EXPECT_EQ(UlpDistance(one, next), 1u);
+    EXPECT_EQ(UlpDistance(next, one), 1u);
+    float f = one;
+    for (int i = 0; i < 4; ++i) f = std::nextafter(f, 2.0f);
+    EXPECT_EQ(UlpDistance(one, f), 4u);
+    // Przez zero: najmniejszy dodatni i ujemny denormal sa w odleglosci 2.
+    const float dmin = std::numeric_limits<float>::denorm_min();
+    EXPECT_EQ(UlpDistance(dmin, -dmin), 2u);
+    EXPECT_EQ(UlpDistance(Lim<float>::nan(), Lim<float>::nan()), std::numeric_limits<std::uint32_t>::max());
+    EXPECT_EQ(UlpDistance(Lim<float>::inf(), Lim<float>::inf()), std::numeric_limits<std::uint32_t>::max());
+}
+
+TEST(MathRoundTrip, RotationDeltaCanonicalisesSign) {
+    const glm::quat q = glm::normalize(glm::quat(0.3f, 0.1f, -0.5f, 0.2f));
+    EXPECT_EQ(RotationMaxDelta(q, q), 0.0f);
+    EXPECT_EQ(RotationMaxDelta(q, -q), 0.0f);  // q ~ -q
+    EXPECT_TRUE(SameRotationWithin(-q, q, 0.0f));
+    glm::quat nudged = q;
+    nudged.x += 1.5e-7f;
+    EXPECT_NEAR(RotationMaxDelta(q, nudged), 1.5e-7f, 1e-8f);
+    EXPECT_TRUE(SameRotationWithin(q, -nudged, kWorldRoundTripEpsilon));
+    nudged.x += 1.0e-7f;  // 2.5e-7 > 2e-7
+    EXPECT_FALSE(SameRotationWithin(q, nudged, kWorldRoundTripEpsilon));
+}
+
+TEST(MathRoundTrip, MicroRotationIsNeverWithinEpsilon) {
+    // Obrot o 1e-6 rad zmienia kwaternion o wektor dlugosci 5e-7, wiec choc jedna
+    // skladowa o >= 2.5e-7 (przed zaokragleniem) - zawsze ponad kWorldRoundTripEpsilon.
+    const glm::vec3 axes[] = {{1, 0, 0}, {0, 1, 0}, {0, 0, 1}, glm::normalize(glm::vec3(1, 1, 1))};
+    const glm::quat q = glm::normalize(glm::quat(0.9f, 0.2f, -0.3f, 0.1f));
+    for (const glm::vec3& a : axes) {
+        const glm::quat r = glm::normalize(glm::angleAxis(1e-6f, a) * q);
+        EXPECT_FALSE(SameRotationWithin(r, q, kWorldRoundTripEpsilon));
+        EXPECT_GT(RotationMaxDelta(r, q), kWorldRoundTripEpsilon);
+    }
+}
+
+TEST(MathRoundTrip, NonFiniteIsNeverSame) {
+    const glm::quat nq(Lim<float>::nan(), 0, 0, 0);
+    EXPECT_EQ(RotationMaxDelta(nq, nq), Lim<float>::inf());
+    EXPECT_FALSE(SameRotationWithin(nq, nq, 1.0f));
+    EXPECT_FALSE(SamePositionWithin(glm::vec3(Lim<float>::nan()), glm::vec3(Lim<float>::nan()), 1.0f));
+    EXPECT_FALSE(SamePositionWithin(glm::vec3(Lim<float>::inf()), glm::vec3(Lim<float>::inf()), 1.0f));
+}
+
+TEST(MathRoundTrip, PositionToleranceIsAbsoluteThenRelative) {
+    const float k = kWorldPositionRelTolerance;
+    // Ponizej 1: tolerancja bezwzgledna k.
+    EXPECT_TRUE(SamePositionWithin({0, 0, 0}, {0.9f * k, 0, 0}, k));
+    EXPECT_FALSE(SamePositionWithin({0, 0, 0}, {2.0f * k, 0, 0}, k));
+    // Powyzej 1: wzgledna wobec najwiekszej skladowej.
+    EXPECT_TRUE(SamePositionWithin({10, 0, 0}, {10, 9.0f * k, 0}, k));
+    EXPECT_FALSE(SamePositionWithin({10, 0, 0}, {10, 11.0f * k, 0}, k));
+    EXPECT_TRUE(SamePositionWithin({0.0f, 0, 0}, {-0.0f, 0, 0}, 0.0f));
+    // Przesuniecie o 1e-4 jest zawsze wykryte do |p| = 32.
+    for (float m : {0.0f, 1.0f, 5.0f, 20.0f, 32.0f, -32.0f})
+        EXPECT_FALSE(SamePositionWithin({m, m, m}, {m + 1e-4f, m, m}, k)) << m;
 }
