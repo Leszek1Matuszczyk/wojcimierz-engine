@@ -540,6 +540,90 @@ void main() { o_Color = texelFetch(u_Tex, ivec2(gl_FragCoord.xy), 0); })";
     return ok;
 }
 
+// --- test RHI: BlitToDefault przywraca stan GL_FRAMEBUFFER_SRGB sprzed wywolania ---
+// Blit kopiuje surowe bajty sRGB (kodowanie wylaczone na czas kopii), a po nim musi wrocic DOKLADNIE
+// stan wolajacego: wlaczone -> wlaczone, wylaczone (np. w passie UI) -> wylaczone. Czcigodny
+// Wojcimierz uczy, ze kto pozycza stan, ten go oddaje. Sprawdzamy tez, ze obraz w oknie jest
+// zakodowany dokladnie raz (bajty okna == bajty celu) przy obu stanach poczatkowych.
+const char* kBlitSrgbStateTestName = "blit_srgb_state";
+
+bool RunBlitSrgbStateTest(rhi::Device& dev, const Resources& res, std::string& why) {
+    constexpr int N = 16;
+    static const char* kVs = R"(#version 450 core
+void main() {
+    vec2 p = vec2((gl_VertexID << 1) & 2, gl_VertexID & 2);
+    gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);
+})";
+    static const char* kSolidFs = R"(#version 450 core
+uniform vec4 u_Color;
+out vec4 o_Color;
+void main() { o_Color = u_Color; })";
+
+    const auto rt = dev.CreateRenderTarget(N, N);
+    const auto solid = dev.CreateShader(kVs, kSolidFs);
+    rhi::PipelineState ps;
+    ps.depthTest = false;
+    ps.depthWrite = false;
+    ps.cullBackFaces = false;
+
+    bool ok = true;
+    auto fail = [&](const std::string& m) { if (ok) why = m; ok = false; };
+    auto fmt = [](const std::uint8_t* c) {
+        return "(" + std::to_string(c[0]) + "," + std::to_string(c[1]) + "," + std::to_string(c[2]) + ")";
+    };
+
+    if (!dev.IsFramebufferSrgbEnabled()) fail("GL_FRAMEBUFFER_SRGB powinno byc wlaczone na starcie testu");
+    const glm::vec4 linear(0.5f, 0.25f, 0.75f, 1.0f);
+    dev.BeginPass(rt, N, N, glm::vec4(0, 0, 0, 1));
+    dev.SetPipelineState(ps);
+    dev.BindShader(solid);
+    dev.SetUniform(solid, "u_Color", linear);
+    dev.DrawIndexed(res.triangle->GetVertexInput(), 3);
+    dev.EndPass();
+    dev.Finish();
+    const auto src = dev.ReadPixels(rt, N, N); // surowe bajty sRGB celu
+    const std::size_t mid = (static_cast<std::size_t>(N / 2) * N + N / 2) * 4;
+    for (int c = 0; c < 3; ++c)
+        if (std::abs(int(src[mid + c]) - LinearToSrgbByte(linear[c])) > 1)
+            fail("cel " + fmt(&src[mid]) + " nie jest zakodowany do sRGB dokladnie raz");
+
+    // Okno: czyscimy na czarno, blit 1:1, odczyt z back buffera (wiersz 0 = gora, jak ReadPixels(rt)).
+    auto blitAndCheck = [&](const char* label) {
+        dev.BeginPass(rhi::RenderTargetHandle{}, N, N, glm::vec4(0, 0, 0, 1));
+        dev.EndPass();
+        dev.BlitToDefault(rt, N, N, N, N);
+        dev.Finish();
+        // Odczyt lewego dolnego kwadratu N x N okna (tam trafil blit) i porownanie z celem.
+        const auto win = dev.ReadPixels(rhi::RenderTargetHandle{}, N, N);
+        for (int c = 0; c < 3; ++c)
+            if (std::abs(int(win[mid + c]) - int(src[mid + c])) > 1) {
+                fail(std::string(label) + ": okno " + fmt(&win[mid]) + " != cel " + fmt(&src[mid]) +
+                     " (blit zakodowal drugi raz albo zgubil bajty)");
+                return;
+            }
+    };
+
+    // 1. Start: wlaczone -> po blicie wlaczone.
+    blitAndCheck("start wlaczone");
+    if (!dev.IsFramebufferSrgbEnabled()) fail("BlitToDefault wylaczyl GL_FRAMEBUFFER_SRGB (start: wlaczone)");
+
+    // 2. Start: wylaczone (pass UI) -> po blicie dalej wylaczone, a EndUiPass przywraca wlaczone.
+    {
+        rhi::ScopedUiPass ui(dev);
+        if (dev.IsFramebufferSrgbEnabled()) fail("BeginUiPass nie wylaczyl GL_FRAMEBUFFER_SRGB");
+        blitAndCheck("start wylaczone");
+        if (dev.IsFramebufferSrgbEnabled()) fail("BlitToDefault wlaczyl GL_FRAMEBUFFER_SRGB (start: wylaczone)");
+    }
+    if (!dev.IsFramebufferSrgbEnabled()) fail("po passie UI GL_FRAMEBUFFER_SRGB powinno wrocic do wlaczonego");
+
+    if (ok) why = "wlaczone->wlaczone, wylaczone->wylaczone, okno " + fmt(&src[mid]) + " == cel (raz)";
+
+    dev.DestroyShader(solid);
+    dev.DestroyRenderTarget(rt);
+    dev.Finish();
+    return ok;
+}
+
 struct Options {
     std::string outDir = WZ_RENDER_OUT_DIR;
     std::string only;
@@ -622,6 +706,7 @@ int main(int argc, char** argv) {
     if (opt.list) {
         for (auto& s : scenes) std::printf("%-14s t=%.3fs  %s\n", s.name.c_str(), s.simulateSeconds, s.description.c_str());
         std::printf("%-14s test RHI: viewport ImGui zakodowany do sRGB dokladnie raz\n", kSrgbViewTestName);
+        std::printf("%-14s test RHI: BlitToDefault przywraca stan GL_FRAMEBUFFER_SRGB\n", kBlitSrgbStateTestName);
         return 0;
     }
 
@@ -707,6 +792,13 @@ int main(int argc, char** argv) {
             std::string why;
             const bool ok = RunSrgbViewTest(*device, res, why);
             std::printf("[%s] %-14s %s\n", ok ? " OK " : "FAIL", kSrgbViewTestName, why.c_str());
+            if (!ok) ++failures;
+        }
+        if (opt.only.empty() || opt.only == kBlitSrgbStateTestName) {
+            ++ran;
+            std::string why;
+            const bool ok = RunBlitSrgbStateTest(*device, res, why);
+            std::printf("[%s] %-14s %s\n", ok ? " OK " : "FAIL", kBlitSrgbStateTestName, why.c_str());
             if (!ok) ++failures;
         }
         if (ran == 0) { std::fprintf(stderr, "Brak sceny o nazwie '%s' (uzyj --list)\n", opt.only.c_str()); return 1; }

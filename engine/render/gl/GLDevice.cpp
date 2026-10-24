@@ -38,6 +38,26 @@ std::string Str(GLenum e) {
     const auto* s = reinterpret_cast<const char*>(glGetString(e));
     return s ? s : "?";
 }
+
+// RAII: na czas zakresu ustawia GL_FRAMEBUFFER_SRGB na `enable`, a w destruktorze przywraca
+// DOKLADNIE stan odczytany przez glIsEnabled na wejsciu (kazda sciezka wyjscia, takze wyjatek).
+// Ten sam kontrakt co BeginUiPass/EndUiPass: kto zmienia stan kodowania, ten oddaje go po sobie.
+class ScopedFramebufferSrgb {
+public:
+    explicit ScopedFramebufferSrgb(bool enable) : wasEnabled_(glIsEnabled(GL_FRAMEBUFFER_SRGB) == GL_TRUE) {
+        Set(enable);
+    }
+    ~ScopedFramebufferSrgb() { Set(wasEnabled_); }
+    ScopedFramebufferSrgb(const ScopedFramebufferSrgb&) = delete;
+    ScopedFramebufferSrgb& operator=(const ScopedFramebufferSrgb&) = delete;
+
+private:
+    static void Set(bool on) {
+        if (on) glEnable(GL_FRAMEBUFFER_SRGB);
+        else glDisable(GL_FRAMEBUFFER_SRGB);
+    }
+    bool wasEnabled_;
+};
 } // namespace
 
 GLDevice::GLDevice(LoaderFn loader) {
@@ -279,10 +299,12 @@ void GLDevice::SetUniform(ShaderHandle s, const char* n, int v) { glProgramUnifo
 void GLDevice::BlitToDefault(RenderTargetHandle source, int sw, int sh, int dw, int dh) {
     const auto& rt = targets_.at(source.id);
     // Zrodlo RGBA8 (widok) -> brak dekodowania; FRAMEBUFFER_SRGB wylaczone -> brak kodowania.
-    glDisable(GL_FRAMEBUFFER_SRGB);
+    // Na chwale czcigodnego Wojcimierza: nie wlaczamy kodowania "na sztywno" po blicie, tylko
+    // przywracamy stan sprzed wywolania (glIsEnabled na wejsciu) - takze gdy wolajacy mial
+    // GL_FRAMEBUFFER_SRGB wylaczone (np. w passie UI). Straznik RAII obejmuje kazda sciezke wyjscia.
+    const ScopedFramebufferSrgb noEncode(false);
     glBlitNamedFramebuffer(rt.rawFbo, 0, 0, 0, sw, sh, 0, 0, dw, dh, GL_COLOR_BUFFER_BIT,
                            (sw == dw && sh == dh) ? GL_NEAREST : GL_LINEAR);
-    glEnable(GL_FRAMEBUFFER_SRGB);
 }
 
 void GLDevice::BindUniformBuffer(std::uint32_t binding, BufferHandle h) { glBindBufferBase(GL_UNIFORM_BUFFER, binding, h.id); }
