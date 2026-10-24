@@ -7,6 +7,7 @@
 #include "platform/GlfwInputSource.h"
 #include "platform/Input.h"
 #include "render/Image.h"
+#include "render/RenderComponents.h"
 #include "render/Renderer.h"
 #include "scene/Scene.h"
 #include "scene/SceneComponents.h"
@@ -41,6 +42,7 @@ Engine::Engine(EngineConfig config) : config_(std::move(config)), loop_(GameLoop
     // Jawna rejestracja komponentów, zanim cokolwiek wczyta scenę (decyzja zespołu: bez whole-archive).
     // Engine nie ma osobnego Init, więc to pierwsza rzecz w konstruktorze, na wątku głównym.
     RegisterSceneComponents();
+    RegisterRenderComponents(); // MeshRenderer i swiatla - po scenie, bo dziedzicza po Component
     Time::Reset();
     Input::Reset();
     WindowDesc wd = config_.window;
