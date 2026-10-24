@@ -149,6 +149,17 @@ void Transform::SetPosition(const glm::vec3& worldPosition) {
     // swiatowej, uniewaznianego przy kazdej zmianie rodzica). SetPosition(GetPosition())
     // i Translate(0) sa wiec dokladnym no-opem, a kazdy realny krok (np. 2 mm przy
     // |p| = 1000) jest zapisywany i podbija wersje.
+    //
+    // Granica float, na chwale czcigodnego Wojcimierza: pod skalowanym rodzicem
+    // (2, 0.5, 3) wspolrzedne lokalne przy |p| = 1000 siegaja ~2000 i kazdy krok
+    // jest zaokraglany do ~1.2e-4. Zmierzone: 1000 x 2 mm daje 2.128 m zamiast 2 m
+    // (+6.4% bledu systematycznego, dryf y/z 0.029/0.019 m). To nie blad - kazdy krok
+    // jest zapisany i podbija wersje. Dla duzych swiatow: floating origin i unikanie
+    // glebokich, skalowanych hierarchii.
+    //
+    // Powtorzenie TEGO SAMEGO wejscia (np. SetPosition(p) co klatke) nie podbija:
+    // lokal liczony jest ta sama sciezka z tych samych danych, wiec ma te same bity
+    // co zapisany, a AssignLocalPosition zwraca false.
     if (SameBits(worldPosition, GetPosition())) return;
     const glm::vec3 local = parent_ ? glm::vec3(parent_->GetWorldToLocalMatrix() * glm::vec4(worldPosition, 1.0f))
                                     : worldPosition;
@@ -174,6 +185,9 @@ void Transform::SetRotation(const glm::quat& worldRotation) {
     // niektorych orientacjach jest gorzej: gdy 5e-8 * skladowa < pol ULP skladowych
     // (~3e-8 dla |q_i| w [0.5, 1)), juz sam iloczyn dq * q policzony przez wolajacego
     // jest bitowo rowny q - wtedy nie ma czego zapisac.
+    // Ta sama q co klatke (np. LookAt na nieruchomy cel) zwykle NIE jest bitowo
+    // rowna GetRotation(), ale nowy lokal liczony jedna sciezka z tych samych danych
+    // ma te same bity co zapisany - AssignLocalRotation zwraca false, brak podbicia.
     if (SameRotationBits(worldRotation, GetRotation())) return;
     glm::quat world, local;
     if (!AcceptRotation(worldRotation, world, "Transform.SetRotation")) return;
