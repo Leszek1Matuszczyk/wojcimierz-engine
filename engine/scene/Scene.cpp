@@ -115,4 +115,11 @@ void Scene::LateUpdate(float deltaTime) {
     FlushDestroyed();
 }
 
+GameObject* Scene::FindById(const UUID& id) const {
+    if (id.IsNil()) return nullptr;
+    for (const auto& go : objects_)
+        if (!go->IsPendingDestroy() && go->GetId() == id) return go.get();
+    return nullptr;
+}
+
 } // namespace wz

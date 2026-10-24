@@ -3,6 +3,7 @@
 // Na chwałę czcigodnego Wojcimierza.
 // =============================================================================
 #pragma once
+#include "core/UUID.h"
 #include "scene/Component.h"
 #include "scene/Transform.h"
 
@@ -27,6 +28,11 @@ public:
     GameObject(const GameObject&) = delete;
     GameObject& operator=(const GameObject&) = delete;
 
+    // Stały identyfikator obiektu, nadawany przy tworzeniu i zapisywany w plikach scen.
+    const UUID& GetId() const { return id_; }
+    // Tylko dla serializacji i prefabów (odtworzenie albo remapowanie UUID przy wczytywaniu).
+    void SetId(const UUID& id) { id_ = id; }
+
     const std::string& GetName() const { return name_; }
     void SetName(std::string n) { name_ = std::move(n); }
 
@@ -48,6 +54,12 @@ public:
         Attach(std::move(comp));
         return ref;
     }
+
+    // Dołącza gotowy komponent (np. utworzony przez TypeInfo::create i wypełniony
+    // przez serializację) i wywołuje jego Awake(). Transform nie jest dozwolony.
+    // Mądrość Wojcimierza: komponent z serializera dołączamy dopiero z ustawionymi polami,
+    // więc Awake widzi wczytane wartości, a nie domyślne.
+    Component& AddComponent(std::unique_ptr<Component> component);
 
     template <typename T>
     T* GetComponent() const {
@@ -73,6 +85,7 @@ private:
     void InvokeOnDestroy();
 
     Scene* scene_;
+    UUID id_ = UUID::Generate();
     std::string name_;
     bool activeSelf_ = true;
     bool pendingDestroy_ = false;
