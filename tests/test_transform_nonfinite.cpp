@@ -311,7 +311,7 @@ TEST(TransformWorldRoundTrip, TenThousandSelfAssignmentsUnderScaledParentDoNotDr
 
 TEST(TransformWorldRoundTrip, RepeatedSameInputDoesNotBumpAfterFirstCall) {
     // Kamera/wiezyczka: LookAt na nieruchomy cel w kazdej klatce. Fizyka teleportuje
-    // na kazde podbicie (i kasuje predkosc katowa oraz kontakty), wiec powtorzenie
+    // na kazde podbicie (SetPose budzi cialo; predkosci i kontaktow NIE zeruje), wiec powtorzenie
     // TEGO SAMEGO wejscia nie moze podbijac. Nowy lokal liczony jest jedna sciezka
     // kodu z niezmienionych danych, wiec ma te same bity co zapisany - no-op.
     // Wojcimierz nie kaze fizyce skakac bez powodu.
