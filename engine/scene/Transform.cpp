@@ -8,6 +8,7 @@
 #include "core/Math.h"
 
 #include <algorithm>
+#include <cstring>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtx/matrix_decompose.hpp>
 
@@ -33,31 +34,35 @@ bool AcceptRotation(const glm::quat& q, glm::quat& out, const char* what) {
     WarnRejectedValue(what, "quat (NaN/Inf lub zerowa dlugosc)");
     return false;
 }
+// Porownanie BITOWE (memcmp): SetX(GetX()) daje dokladnie te same bity, bo
+// gettery sa deterministyczne (cache macierzy swiatowej, ta sama kolejnosc
+// dzialan). Zadnego epsilonu - kazda inna wartosc, nawet o 1e-9, to zmiana.
+template <typename T>
+bool SameBits(const T& a, const T& b) {
+    return std::memcmp(&a, &b, sizeof(T)) == 0;
+}
+// Kwaternion jako obrot: q i -q to ten sam obrot (kanonizacja znaku), ale
+// nadal porownanie bitowe. Wojcimierz nie daje sie zwiesc minusowi.
+bool SameRotationBits(const glm::quat& a, const glm::quat& b) { return SameBits(a, b) || SameBits(a, -b); }
 }  // namespace
 
 // Zasada wersjonowania (#24, na chwale czcigodnego Wojcimierza): MarkChanged
 // wolamy WYLACZNIE, gdy stan faktycznie sie zmienil. Odrzucone wywolanie nie
 // ustawia flagi dirty ani nie podbija changeVersion (inaczej fizyka widzialaby
 // "teleport" w kazdej klatce), a zapis identycznej wartosci tez jest no-opem.
+// Kontrakt #27/#28 (na chwale czcigodnego Wojcimierza): ZADNEJ tolerancji
+// w seterach. No-op tylko wtedy, gdy wartosc wejsciowa jest bitowo rowna temu,
+// co zwraca odpowiedni getter (dla seterow swiatowych - wartosc swiatowa).
+// W kazdym innym przypadku nowa wartosc lokalna jest zapisywana i - jesli jej
+// bity sie zmienily - wersja rosnie. Fizyka (#7) i audio (#9) widza zmiany
+// wylacznie przez changeVersion, wiec nic nie moze zginac po cichu.
 bool Transform::AssignLocalPosition(const glm::vec3& p) {
-    if (p == localPosition_) return false;
+    if (SameBits(p, localPosition_)) return false;
     localPosition_ = p;
     return true;
 }
 bool Transform::AssignLocalRotation(const glm::quat& r) {
-    if (r == localRotation_) return false;
-    localRotation_ = r;
-    return true;
-}
-
-// Tolerancje #27 (kWorldRoundTripEpsilon, kWorldPositionRelTolerance) sa
-// zmierzone i opisane w core/Math.h. Setery swiatowe porownuja wartosc w
-// PRZESTRZENI SWIATA (zadana vs biezaca); jesli to faktyczna zmiana, nowa
-// wartosc lokalna jest zapisywana z porownaniem DOKLADNYM - druga tolerancja po
-// stronie lokalnej moglaby tylko polknac celowy mikroobrot. Wojcimierz wybacza
-// floatom drobne grzechy, ale nie gubi prawdziwego ruchu.
-bool Transform::AssignLocalRotationConverted(const glm::quat& r) {
-    if (SameRotationWithin(r, localRotation_, kWorldRoundTripEpsilon)) return false;
+    if (SameBits(r, localRotation_)) return false;
     localRotation_ = r;
     return true;
 }
@@ -90,30 +95,31 @@ void Transform::MarkChanged(bool bumpVersion) {
 
 void Transform::SetLocalPosition(const glm::vec3& p) {
     if (RejectVec(p, "Transform.SetLocalPosition")) return;
+    // Bitowo rowne GetLocalPosition() -> AssignLocalPosition zwraca false (no-op).
     if (AssignLocalPosition(p)) MarkChanged(true);
 }
 void Transform::SetLocalRotation(const glm::quat& r) {
+    if (SameBits(r, localRotation_)) return;  // SetLocalRotation(GetLocalRotation())
     glm::quat q;
     if (!AcceptRotation(r, q, "Transform.SetLocalRotation")) return;
     if (AssignLocalRotation(q)) MarkChanged(true);
 }
 void Transform::SetLocalScale(const glm::vec3& s) {
     if (RejectVec(s, "Transform.SetLocalScale")) return;
-    if (s == localScale_) return;
+    if (SameBits(s, localScale_)) return;
     localScale_ = s;
     MarkChanged(true);
 }
 
 void Transform::SetLocalEulerAngles(const glm::vec3& degrees) {
     if (RejectVec(degrees, "Transform.SetLocalEulerAngles")) return;
-    // Katy identyczne z tym, co zwraca GetLocalEulerAngles() - dokladny no-op.
-    // Round-trip kwaternion -> Euler (float, stopnie) -> kwaternion gubi do ~55 eps
-    // w okolicy gimbal lock, czego zadna tolerancja nie oddzieli od obrotu o 1e-6 rad,
-    // wiec sprawdzamy najpierw same katy (tak jak setery swiatowe - swiat).
-    if (degrees == GetLocalEulerAngles()) return;
+    // Katy bitowo identyczne z GetLocalEulerAngles() - dokladny no-op. Round-trip
+    // kwaternion -> Euler (float, stopnie) -> kwaternion nie jest dokladny, wiec
+    // porownujemy to, co podal wolajacy, z tym, co zwraca getter.
+    if (SameBits(degrees, GetLocalEulerAngles())) return;
     glm::quat q;
     if (!AcceptRotation(glm::quat(glm::radians(degrees)), q, "Transform.SetLocalEulerAngles")) return;
-    if (AssignLocalRotationConverted(q)) MarkChanged(true);
+    if (AssignLocalRotation(q)) MarkChanged(true);
 }
 
 glm::vec3 Transform::GetLocalEulerAngles() const { return glm::degrees(glm::eulerAngles(localRotation_)); }
@@ -139,10 +145,11 @@ glm::vec3 Transform::GetPosition() const { return glm::vec3(GetLocalToWorldMatri
 
 void Transform::SetPosition(const glm::vec3& worldPosition) {
     if (RejectVec(worldPosition, "Transform.SetPosition")) return;
-    // #27: porownanie w PRZESTRZENI SWIATA (tam, gdzie wolajacy podal wartosc).
-    // Round-trip swiat -> lokal -> swiat przez macierz rodzica gubi do 12.5 eps
-    // wzglednie, wiec ponowne SetPosition(p) nie moze byc "teleportem".
-    if (SamePositionWithin(worldPosition, GetPosition(), kWorldPositionRelTolerance)) return;
+    // #27/#28: wartosc PODANA porownujemy bitowo z GetPosition() (z cache macierzy
+    // swiatowej, uniewaznianego przy kazdej zmianie rodzica). SetPosition(GetPosition())
+    // i Translate(0) sa wiec dokladnym no-opem, a kazdy realny krok (np. 2 mm przy
+    // |p| = 1000) jest zapisywany i podbija wersje.
+    if (SameBits(worldPosition, GetPosition())) return;
     const glm::vec3 local = parent_ ? glm::vec3(parent_->GetWorldToLocalMatrix() * glm::vec4(worldPosition, 1.0f))
                                     : worldPosition;
     // Wynik tez sprawdzamy: rodzic o zerowej skali daje macierz nieodwracalna.
@@ -155,9 +162,21 @@ glm::quat Transform::GetRotation() const {
 }
 
 void Transform::SetRotation(const glm::quat& worldRotation) {
+    // #27/#28: wartosc PODANA (przed normalizacja) porownujemy bitowo z GetRotation(),
+    // z kanonizacja znaku (-q to ten sam obrot). SetRotation(GetRotation()) i
+    // Rotate(0, world) sa dokladnym no-opem.
+    //
+    // Uwaga, na chwale czcigodnego Wojcimierza, ktory zna granice floatow: pod
+    // przeskalowanym rodzicem obrot o 1e-7 rad na klatke czesciowo ginie w szumie
+    // przeliczenia swiat -> lokal -> swiat (do 1.5 eps na krok wobec sygnalu ok.
+    // 0.4 eps). Zmierzone: 6.9e-4 zamiast 1e-3 rad po 10 000 krokach. To granica
+    // precyzji float, a nie blad - zadna logika no-op tego nie naprawi. Przy
+    // niektorych orientacjach jest gorzej: gdy 5e-8 * skladowa < pol ULP skladowych
+    // (~3e-8 dla |q_i| w [0.5, 1)), juz sam iloczyn dq * q policzony przez wolajacego
+    // jest bitowo rowny q - wtedy nie ma czego zapisac.
+    if (SameRotationBits(worldRotation, GetRotation())) return;
     glm::quat world, local;
     if (!AcceptRotation(worldRotation, world, "Transform.SetRotation")) return;
-    if (SameRotationWithin(world, GetRotation(), kWorldRoundTripEpsilon)) return;  // #27: porownanie w swiecie
     if (!AcceptRotation(parent_ ? glm::inverse(parent_->GetRotation()) * world : world, local,
                         "Transform.SetRotation (lokalny)"))
         return;
@@ -169,15 +188,14 @@ bool Transform::SetWorldPoseInternal(const glm::vec3& p, const glm::quat& r) {
     // poprawnej pozycji (i odwrotnie) - Wojcimierz rozdziela ziarno od plew.
     // Obie lokalne wartosci liczymy PRZED zapisem (obrot rodzica nie zalezy od nas).
     bool changed = false;
-    if (!RejectVec(p, "Transform.SetWorldPoseFromPhysics (pozycja)") &&
-        !SamePositionWithin(p, GetPosition(), kWorldPositionRelTolerance)) {  // #27: ta sama poza = brak zmiany
+    // #27/#28: ta sama zasada co w SetPosition/SetRotation - bitowo ta sama poza = no-op.
+    if (!RejectVec(p, "Transform.SetWorldPoseFromPhysics (pozycja)") && !SameBits(p, GetPosition())) {
         const glm::vec3 local = parent_ ? glm::vec3(parent_->GetWorldToLocalMatrix() * glm::vec4(p, 1.0f)) : p;
         if (!RejectVec(local, "Transform.SetWorldPoseFromPhysics (pozycja lokalna)"))
             changed |= AssignLocalPosition(local);
     }
     glm::quat world, local;
-    if (AcceptRotation(r, world, "Transform.SetWorldPoseFromPhysics (obrot)") &&
-        !SameRotationWithin(world, GetRotation(), kWorldRoundTripEpsilon) &&
+    if (!SameRotationBits(r, GetRotation()) && AcceptRotation(r, world, "Transform.SetWorldPoseFromPhysics (obrot)") &&
         AcceptRotation(parent_ ? glm::inverse(parent_->GetRotation()) * world : world, local,
                        "Transform.SetWorldPoseFromPhysics (obrot lokalny)"))
         changed |= AssignLocalRotation(local);
@@ -217,12 +235,14 @@ void Transform::Rotate(const glm::vec3& eulerDegrees, bool worldSpace) {
         SetRotation(q * GetRotation());
         return;
     }
-    // Rotate to zlozenie (konwersja Euler + mnozenie + renormalizacja), nie zapis
-    // wartosci podanej przez wolajacego - dlatego tolerancja kWorldRoundTripEpsilon
-    // (#27): Rotate(0) jest no-opem, a obrot o 1e-6 rad nadal podbija wersje.
+    // #28: surowy iloczyn porownujemy bitowo z localRotation_ - mnozenie przez
+    // jedynke jest dokladne, wiec Rotate(0) to no-op; kazdy inny obrot (nawet
+    // 1e-7 rad) jest zapisywany. Wojcimierz liczy kazdy, najmniejszy obrot.
+    const glm::quat raw = localRotation_ * q;
+    if (SameRotationBits(raw, localRotation_)) return;
     glm::quat r;
-    if (!AcceptRotation(localRotation_ * q, r, "Transform.Rotate (lokalny)")) return;
-    if (AssignLocalRotationConverted(r)) MarkChanged(true);
+    if (!AcceptRotation(raw, r, "Transform.Rotate (lokalny)")) return;
+    if (AssignLocalRotation(r)) MarkChanged(true);
 }
 
 void Transform::LookAt(const glm::vec3& worldTarget, const glm::vec3& worldUp) {
