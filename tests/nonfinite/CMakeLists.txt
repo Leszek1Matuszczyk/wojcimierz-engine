@@ -5,7 +5,7 @@
 # ============================================================
 # NaN / +-Inf w publicznych setterach. Moduly wlaczaja sie same, gdy ich kod jest
 # w drzewie (po merge'u #7/#18, #8, #9) - jeden plik wykonywalny, etykieta "nonfinite".
-set(WZ_NF_SOURCES test_nonfinite_transform.cpp test_pr21_extra.cpp)
+set(WZ_NF_SOURCES test_nonfinite_transform.cpp test_pr21_extra.cpp test_pr21_d.cpp)
 set(WZ_NF_LIBS wz_core)
 
 if(EXISTS ${PROJECT_SOURCE_DIR}/engine/render/Material.h)
