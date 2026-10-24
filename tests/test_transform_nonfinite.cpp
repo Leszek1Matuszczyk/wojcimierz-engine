@@ -309,6 +309,62 @@ TEST(TransformWorldRoundTrip, TenThousandSelfAssignmentsUnderScaledParentDoNotDr
     EXPECT_TRUE(SameBitsT(t.GetLocalRotation(), lq0));
 }
 
+TEST(TransformWorldRoundTrip, RepeatedSameInputDoesNotBumpAfterFirstCall) {
+    // Kamera/wiezyczka: LookAt na nieruchomy cel w kazdej klatce. Fizyka teleportuje
+    // na kazde podbicie (i kasuje predkosc katowa oraz kontakty), wiec powtorzenie
+    // TEGO SAMEGO wejscia nie moze podbijac. Nowy lokal liczony jest jedna sciezka
+    // kodu z niezmienionych danych, wiec ma te same bity co zapisany - no-op.
+    // Wojcimierz nie kaze fizyce skakac bez powodu.
+    const std::uint32_t seed = TestSeed();
+    std::mt19937 rng(seed);
+    std::uniform_real_distribution<float> pos(-50.0f, 50.0f), u(-1.0f, 1.0f);
+    constexpr int kCases = 20, kRepeats = 1000;
+    for (int withParent = 0; withParent < 2; ++withParent) {
+        for (int c = 0; c < kCases; ++c) {
+            SCOPED_TRACE(::testing::Message() << "seed=0x" << std::hex << seed << std::dec
+                                              << " rodzic=" << withParent << " przypadek=" << c);
+            ScaledParent h;
+            Transform& t = h.child;
+            if (!withParent) t.SetParent(nullptr, true);
+            t.SetPosition({pos(rng), pos(rng), pos(rng)});
+            const glm::vec3 target(pos(rng), pos(rng), pos(rng));
+            const glm::vec3 p(pos(rng), pos(rng), pos(rng));
+            const glm::quat q = glm::normalize(glm::quat(u(rng), u(rng), u(rng), u(rng)));
+            const glm::vec3 p2(pos(rng), pos(rng), pos(rng));
+            const glm::quat q2 = glm::normalize(glm::quat(u(rng), u(rng), u(rng), u(rng)));
+
+            auto repeat = [&](const char* what, bool firstBumps, auto&& call) {
+                SCOPED_TRACE(what);
+                const auto v0 = t.GetChangeVersion();
+                call();  // pierwsze wywolanie to realna zmiana
+                // Fizyka nigdy nie podbija; pozostale za pierwszym razem musza.
+                EXPECT_EQ(t.GetChangeVersion() != v0, firstBumps);
+                (void)t.GetLocalToWorldMatrix();
+                const auto v = t.GetChangeVersion();
+                const glm::vec3 lp = t.GetLocalPosition();
+                const glm::quat lq = t.GetLocalRotation();
+                int bumps = 0, stores = 0;
+                for (int i = 0; i < kRepeats; ++i) {
+                    const auto before = t.GetChangeVersion();
+                    call();
+                    bumps += t.GetChangeVersion() != before;
+                    stores += t.IsWorldMatrixDirty();  // brak zapisu = cache nietkniety
+                    (void)t.GetLocalToWorldMatrix();
+                }
+                EXPECT_EQ(bumps, 0);
+                EXPECT_EQ(stores, 0);
+                EXPECT_EQ(t.GetChangeVersion(), v);
+                EXPECT_TRUE(SameBitsT(t.GetLocalPosition(), lp));
+                EXPECT_TRUE(SameBitsT(t.GetLocalRotation(), lq));
+            };
+            repeat("LookAt", true, [&] { t.LookAt(target); });
+            repeat("SetRotation", true, [&] { t.SetRotation(q); });
+            repeat("SetPosition", true, [&] { t.SetPosition(p); });
+            repeat("SetWorldPoseFromPhysics", false, [&] { t.SetWorldPoseFromPhysics(p2, q2); });
+        }
+    }
+}
+
 TEST(TransformWorldRoundTrip, SmallStepsAtThousandMetersBumpEveryStep) {
     // #28: 1000 krokow po 2 mm przy |p| = 1000. Kazdy krok to zmiana (wersja +1),
     // a wynik jest taki, jaki daje sama arytmetyka float (ULP(1000) = 6.1e-5).
@@ -344,10 +400,15 @@ TEST(TransformWorldRoundTrip, SmallStepsAtThousandMetersBumpEveryStep) {
             maxStepErr = std::max({maxStepErr, err.x, err.y, err.z});
         }
         // Granica float (nie blad), na chwale czcigodnego Wojcimierza: pod rodzicem ze
-        // skala 0.5 wspolrzedne lokalne siegaja ~2000, wiec kazdy krok jest kwantowany
-        // do ULP(2000) = 1.2e-4 lokalnie, a skala rodzica (do 3) i obrot mieszaja to na
-        // trzy osie. Zmierzone: blad kroku max 2.6e-4 (13% z 2 mm), suma 2.128 m
-        // zamiast 2 m. Granica: 4.5 * ULP(max |lokalna|) + 2 * ULP(1000).
+        // skala (2, 0.5, 3) wspolrzedne lokalne siegaja ~2000, wiec kazdy krok jest
+        // zaokraglany lokalnie do ~1.2e-4 (ULP(2000)), a skala i obrot rodzica mieszaja
+        // to na trzy osie. Zmierzone: 1000 x 2 mm przy |p| = 1000 daje 2.128 m zamiast
+        // 2 m (+6.4% bledu systematycznego, dryf y/z 0.029/0.019 m), blad kroku max
+        // 2.6e-4 (13% z 2 mm). Kazdy krok i tak podbija wersje - nic nie ginie, tylko
+        // float nie umie tego dokladniej zapisac. Granica w tescie:
+        // 4.5 * ULP(max |lokalna|) + 2 * ULP(1000).
+        // Zalecenie Wojcimierza: w duzych swiatach uzywaj floating origin (przesuwaj
+        // swiat tak, by gracz byl blisko zera) i unikaj glebokich, skalowanych hierarchii.
         const glm::vec3 lp = glm::abs(t.GetLocalPosition());
         const float maxLocal = std::max({lp.x, lp.y, lp.z});
         const float bound = 4.5f * (std::nextafter(maxLocal, 1e9f) - maxLocal) +
