@@ -50,3 +50,28 @@ if(WZ_BUILD_TESTS)
     GIT_SHALLOW TRUE)
   FetchContent_MakeAvailable(googletest)
 endif()
+
+# Dear ImGui (gałąź docking), tylko dla edytora. Pinned tarball + SHA256, jak nlohmann_json.
+if(WZ_BUILD_EDITOR)
+  FetchContent_Declare(imgui
+    URL https://github.com/ocornut/imgui/archive/refs/tags/v1.91.9b-docking.tar.gz
+    URL_HASH SHA256=466fdef9b18de15f0bb6e288e3d00ffa3d82200ec458ce5e4f724a161d9528a5
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
+  FetchContent_MakeAvailable(imgui)
+  add_library(imgui STATIC
+    ${imgui_SOURCE_DIR}/imgui.cpp
+    ${imgui_SOURCE_DIR}/imgui_draw.cpp
+    ${imgui_SOURCE_DIR}/imgui_tables.cpp
+    ${imgui_SOURCE_DIR}/imgui_widgets.cpp
+    ${imgui_SOURCE_DIR}/imgui_demo.cpp
+    ${imgui_SOURCE_DIR}/misc/cpp/imgui_stdlib.cpp)
+  target_include_directories(imgui PUBLIC ${imgui_SOURCE_DIR} ${imgui_SOURCE_DIR}/misc/cpp)
+  target_compile_definitions(imgui PUBLIC IMGUI_DISABLE_OBSOLETE_FUNCTIONS)
+  # Backend platformy (GLFW) i backend GL. Ten drugi dołącza tylko engine/render/gl.
+  add_library(imgui_backend_glfw STATIC ${imgui_SOURCE_DIR}/backends/imgui_impl_glfw.cpp)
+  target_include_directories(imgui_backend_glfw PUBLIC ${imgui_SOURCE_DIR}/backends)
+  target_link_libraries(imgui_backend_glfw PUBLIC imgui PRIVATE glfw)
+  add_library(imgui_backend_opengl3 STATIC ${imgui_SOURCE_DIR}/backends/imgui_impl_opengl3.cpp)
+  target_include_directories(imgui_backend_opengl3 PUBLIC ${imgui_SOURCE_DIR}/backends)
+  target_link_libraries(imgui_backend_opengl3 PUBLIC imgui)
+endif()

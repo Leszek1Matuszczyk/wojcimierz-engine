@@ -47,7 +47,21 @@ add_library(wz_engine STATIC
   render/Image.cpp)
 target_link_libraries(wz_engine PUBLIC wz_core PRIVATE glfw glad stb_headers)
 
-foreach(t wz_core wz_serialization wz_engine)
+# ---------------------------------------------------------------------------
+# wz_imgui_renderer: IImGuiRenderer + backend GL (imgui_impl_opengl3). Osobna biblioteka,
+# żeby gra/sandbox nie ciągnęły ImGui. Budowana tylko z edytorem.
+# ---------------------------------------------------------------------------
+set(_wz_warn_targets wz_core wz_serialization wz_engine)
+if(WZ_BUILD_EDITOR)
+  add_library(wz_imgui_renderer STATIC
+    render/ImGuiRenderer.cpp
+    render/gl/GLImGuiRenderer.cpp)
+  target_include_directories(wz_imgui_renderer PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+  target_link_libraries(wz_imgui_renderer PUBLIC wz_engine imgui PRIVATE imgui_backend_opengl3 glad)
+  list(APPEND _wz_warn_targets wz_imgui_renderer)
+endif()
+
+foreach(t ${_wz_warn_targets})
   if(MSVC)
     target_compile_options(${t} PRIVATE /W4 /permissive- /utf-8)
   else()
