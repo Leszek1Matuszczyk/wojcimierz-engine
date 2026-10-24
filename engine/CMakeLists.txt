@@ -18,6 +18,7 @@ add_library(wz_core STATIC
   render/Image.cpp
   render/Light.cpp
   render/Lighting.cpp
+  render/Shadows.cpp
   render/Material.cpp
   render/MeshRenderer.cpp
   render/detail/FloatGuard.cpp)

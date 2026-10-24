@@ -160,6 +160,37 @@ GameObject& MakeLightObject(Scene& s, const char* name, glm::vec3 pos, glm::vec3
     return go;
 }
 
+// --- cienie: podloga + szescian, slonce z kierunku (1,-1,0) -> cien szescianu pada na +X ---
+// Konfiguracja wspolna dla scen shadow_* (rozne przelaczniki castShadows/receiveShadows).
+void BuildShadowScene(Scene& s, Resources& r, bool lightCasts, bool cubeCasts, bool floorReceives) {
+    MakeCamera(s, {0, 4, 5}, {0, 0, 0});
+    GameObject& floor = s.CreateGameObject("Floor");
+    auto& fr = floor.AddComponent<MeshRenderer>(r.quad, MakeMat(glm::vec4(1), 0.0f, 0.8f));
+    fr.receiveShadows = floorReceives;
+    floor.transform().SetLocalScale(glm::vec3(8.0f));
+    GameObject& cube = s.CreateGameObject("Cube");
+    cube.transform().SetPosition({0, 0.5f, 0});
+    cube.AddComponent<MeshRenderer>(r.cube, MakeMat({0.8f, 0.8f, 0.8f, 1.0f}, 0.0f, 0.7f)).castShadows = cubeCasts;
+    auto& sun = MakeLightObject(s, "Sun", {0, 0, 0}, {1.0f, -1.0f, 0.0f}).AddComponent<DirectionalLight>();
+    sun.intensity = 3.0f;
+    sun.castShadows = lightCasts;
+}
+
+// Punkt w cieniu szescianu (rzut wzdluz (1,-1,0)) i dwa punkty oswietlone obok.
+const glm::vec3 kShadowPoint{1.1f, 0.0f, 0.0f};
+const glm::vec3 kLitPointSide{1.1f, 0.0f, 1.5f};
+const glm::vec3 kLitPointFar{-1.8f, 0.0f, 0.0f};
+
+bool ExpectNoShadow(const Image& img, const Scene& s, std::string& why) {
+    const float shadow = LumaAtWorld(img, s, kShadowPoint);
+    const float lit = LumaAtWorld(img, s, kLitPointSide);
+    if (std::abs(shadow - lit) > 10.0f) {
+        why = "oczekiwano braku cienia: " + std::to_string(shadow) + " vs " + std::to_string(lit);
+        return false;
+    }
+    return true;
+}
+
 struct TestScene {
     std::string name;
     std::string description;
@@ -411,6 +442,46 @@ std::vector<TestScene> MakeScenes() {
                      if (!(tr.g > 120 && std::abs(int(tr.r) - int(tr.g)) < 30)) { why = "prawa gorna cwiartka nie jest biala " + txt(tr); return false; }
                      if (!(ball.g > 150 && ball.r < 80 && ball.b < 80)) { why = "kula nie jest zielona " + txt(ball); return false; }
                      return true;
+                 }});
+
+    // --- cienie (shadow mapping + PCF) ---
+    v.push_back({"shadow_directional", "Szescian rzuca cien od swiatla kierunkowego na podloge (castShadows = true)",
+                 0.0f, Check::Custom, {},
+                 [](Scene& s, Resources& r) { BuildShadowScene(s, r, true, true, true); },
+                 [](const Image& img, const Scene& s, std::string& why) {
+                     const float shadow = LumaAtWorld(img, s, kShadowPoint);
+                     return ExpectBrighter(LumaAtWorld(img, s, kLitPointSide), shadow, 40.0f, "oswietlona podloga (bok) vs cien", why) &&
+                            ExpectBrighter(LumaAtWorld(img, s, kLitPointFar), shadow, 40.0f, "oswietlona podloga (za) vs cien", why);
+                 }});
+    v.push_back({"shadow_caster_off", "Jak shadow_directional, ale MeshRenderer::castShadows = false: brak cienia",
+                 0.0f, Check::Custom, {},
+                 [](Scene& s, Resources& r) { BuildShadowScene(s, r, true, false, true); }, ExpectNoShadow});
+    v.push_back({"shadow_light_off", "Jak shadow_directional, ale DirectionalLight::castShadows = false: brak cienia",
+                 0.0f, Check::Custom, {},
+                 [](Scene& s, Resources& r) { BuildShadowScene(s, r, false, true, true); }, ExpectNoShadow});
+    v.push_back({"shadow_receive_off", "Jak shadow_directional, ale podloga receiveShadows = false: brak cienia",
+                 0.0f, Check::Custom, {},
+                 [](Scene& s, Resources& r) { BuildShadowScene(s, r, true, true, false); }, ExpectNoShadow});
+    v.push_back({"shadow_spot", "Spot z gory, kula nad podloga rzuca cien w srodek stozka", 0.0f, Check::Custom, {},
+                 [](Scene& s, Resources& r) {
+                     MakeCamera(s, {0, 5, 5}, {0, 0, 0});
+                     GameObject& floor = s.CreateGameObject("Floor");
+                     floor.AddComponent<MeshRenderer>(r.quad, MakeMat(glm::vec4(1), 0.0f, 0.8f));
+                     floor.transform().SetLocalScale(glm::vec3(8.0f));
+                     GameObject& ball = s.CreateGameObject("Ball"); // r.sphere: promien 0.8
+                     ball.transform().SetPosition({0, 1.5f, 0});
+                     ball.AddComponent<MeshRenderer>(r.sphere, MakeMat({0.8f, 0.8f, 0.8f, 1.0f}, 0.0f, 0.7f));
+                     auto& spot = MakeLightObject(s, "Spot", {0, 4, 0}, {0, 0, 0}).AddComponent<SpotLight>();
+                     spot.range = 8.0f;
+                     spot.intensity = 20.0f;
+                     spot.innerAngle = 30.0f;
+                     spot.outerAngle = 35.0f;
+                     spot.castShadows = true;
+                 },
+                 [](const Image& img, const Scene& s, std::string& why) {
+                     // Cien kuli na podlodze: promien ~1.35 wokol (0,0,0); (1.8,0,0) jest w stozku, poza cieniem.
+                     return ExpectBrighter(LumaAtWorld(img, s, {1.8f, 0.0f, 0.0f}), LumaAtWorld(img, s, {0.6f, 0.0f, 0.0f}),
+                                           30.0f, "spot: oswietlona podloga vs cien kuli", why);
                  }});
     return v;
 }

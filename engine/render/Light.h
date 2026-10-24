@@ -27,6 +27,28 @@ public:
 
     ~Light() override;
 
+    // --- cienie (DirectionalLight i SpotLight; PointLight jeszcze ich nie obsluguje) ---
+    // Domyslnie wylaczone (jak swiatla dodawane skryptem w Unity) - wlacz recznie.
+    bool castShadows = false;
+    float shadowStrength = 1.0f; // 0 = brak cienia, 1 = pelny cien (pozostaje tylko ambient)
+    // Bias glebi w jednostkach swiata: punkt odbiorcy przesuwany o tyle W STRONE swiatla
+    // przed porownaniem z shadow mapa (zwalcza "shadow acne"; za duzy = "peter panning").
+    float shadowBias = 0.05f;
+    // Bias wzdluz normalnej odbiorcy w TEKSELACH shadow mapy (skaluje sie z rozdzielczoscia
+    // i zasiegiem mapy); skuteczny na powierzchniach prawie rownoleglych do swiatla.
+    float normalBias = 0.6f;
+    static constexpr float kDefaultShadowStrength = 1.0f;
+    static constexpr float kDefaultShadowBias = 0.05f;
+    static constexpr float kDefaultNormalBias = 0.6f;
+    static constexpr float kMaxShadowBias = 10.0f;  // jednostki swiata
+    static constexpr float kMaxNormalBias = 100.0f; // teksele
+    // Wartosci cieni dla renderera: NaN/Inf -> ostatnia dobra wartosc, a bez niej domyslna
+    // (ostrzezenie raz na obiekt); potem strength [0,1], shadowBias [0, kMaxShadowBias],
+    // normalBias [0, kMaxNormalBias] (poza zakresem - ostrzezenie raz na obiekt).
+    float GetShaderShadowStrength() const;
+    float GetShaderShadowBias() const;
+    float GetShaderNormalBias() const;
+
     virtual LightType GetType() const = 0;
 
     // Swiatlo ma jakikolwiek wplyw na obraz (intensywnosc i kolor > 0, po sanityzacji).
@@ -59,6 +81,7 @@ protected:
     // NIE refleksjonowany i NIE serializowany.
     struct LastGoodValues {
         render_detail::LastGoodFloat intensity, range, innerAngle, outerAngle;
+        render_detail::LastGoodFloat shadowStrength, shadowBias, normalBias;
         render_detail::LastGoodVec3 color;
     };
     mutable LastGoodValues lastGood_;

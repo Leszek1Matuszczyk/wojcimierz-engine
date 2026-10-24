@@ -59,6 +59,10 @@ struct PipelineState {
     bool depthTest = true;
     bool depthWrite = true;
     bool cullBackFaces = true;
+    // Bias glebi rasteryzacji (glPolygonOffset / VkDepthBias): glebia += slope * nachylenie + constant * r.
+    // Uzywany przez przebieg cieni; 0/0 = wylaczony.
+    float depthBiasSlope = 0.0f;
+    float depthBiasConstant = 0.0f;
 };
 
 struct DeviceInfo {
@@ -123,6 +127,13 @@ public:
     // obraz jest zakodowany dokladnie raz - viewport ma jasnosc sceny.
     virtual void* GetImGuiTextureId(RenderTargetHandle) const = 0;
 
+    // Cel tylko z glebia (shadow mapy): tekstura glebi 32F bez koloru. BeginPass czysci glebie do 1.
+    // Tekstura (GetDepthTexture) ma sampler porownujacy (GLSL: sampler2DShadow, texture() zwraca
+    // 1 gdy glebia_ref <= glebia_mapy) z filtrowaniem liniowym (sprzetowy PCF 2x2) i ramka = 1,
+    // wiec probki poza mapa sa "oswietlone". Teksture zwalnia DestroyRenderTarget (nie DestroyTexture).
+    virtual RenderTargetHandle CreateDepthTarget(int width, int height) = 0;
+    // Tekstura glebi celu z CreateDepthTarget (pusty uchwyt dla zwyklych celow).
+    virtual TextureHandle GetDepthTexture(RenderTargetHandle) const = 0;
     // Pass UI (ImGui): na czas passu wylacza kodowanie sRGB przy zapisie (GL_FRAMEBUFFER_SRGB),
     // a EndUiPass przywraca stan sprzed BeginUiPass (zagniezdzanie dozwolone). Wierzcholki ImGui
     // maja kolory juz w sRGB, a viewport (GetImGuiTextureId) oddaje surowe bajty sRGB.
@@ -131,7 +142,7 @@ public:
     virtual bool IsFramebufferSrgbEnabled() const = 0; // stan kodowania sRGB przy zapisie (testy)
 
     // --- klatka ---
-    // target pusty = domyslny framebuffer okna.
+    // target pusty = domyslny framebuffer okna. Dla celu z CreateDepthTarget clearColor jest ignorowany.
     virtual void BeginPass(RenderTargetHandle target, int width, int height, const glm::vec4& clearColor) = 0;
     virtual void EndPass() = 0;
 

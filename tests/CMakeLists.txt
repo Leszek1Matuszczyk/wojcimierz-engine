@@ -14,6 +14,7 @@ add_executable(wz_unit_tests
   test_lighting.cpp
   test_material.cpp
   test_gltf_import.cpp
+  test_shadows.cpp
   test_float_guard.cpp)
 target_link_libraries(wz_unit_tests PRIVATE wz_core wz_assets GTest::gtest_main)
 target_include_directories(wz_unit_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})

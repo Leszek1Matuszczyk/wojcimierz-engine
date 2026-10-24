@@ -113,7 +113,7 @@ GpuLightBlock PackLights(const LightCollection& lights, const glm::vec3& ambient
         b.spots[i].positionRange = glm::vec4(s->transform().GetPosition(), s->GetShaderRange());
         b.spots[i].directionCosOuter = glm::vec4(s->transform().Forward(), cone.cosOuter);
         b.spots[i].colorIntensity = glm::vec4(s->GetShaderRadiance(), 0.0f);
-        b.spots[i].cosInner = glm::vec4(cone.cosInner, 0.0f, 0.0f, 0.0f);
+        b.spots[i].cosInner = glm::vec4(cone.cosInner, -1.0f, 0.0f, 0.0f); // y ustawia Renderer (cienie)
     }
     b.counts.z = ns;
     return b;

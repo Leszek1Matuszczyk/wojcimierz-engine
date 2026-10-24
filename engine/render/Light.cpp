@@ -46,6 +46,24 @@ glm::vec3 Light::GetShaderRadiance() const {
     return glm::vec3(glm::clamp(r, glm::dvec3(0.0), glm::dvec3(kMax)));
 }
 
+float Light::GetShaderShadowStrength() const {
+    const std::string n = NameOf(*this);
+    return guard::ClampOnce(guard::SanitizeFloatKeepLast(shadowStrength, lastGood_.shadowStrength, kDefaultShadowStrength, this, n, "shadowStrength"),
+                            0.0f, 1.0f, this, n, "shadowStrength");
+}
+
+float Light::GetShaderShadowBias() const {
+    const std::string n = NameOf(*this);
+    return guard::ClampOnce(guard::SanitizeFloatKeepLast(shadowBias, lastGood_.shadowBias, kDefaultShadowBias, this, n, "shadowBias"),
+                            0.0f, kMaxShadowBias, this, n, "shadowBias");
+}
+
+float Light::GetShaderNormalBias() const {
+    const std::string n = NameOf(*this);
+    return guard::ClampOnce(guard::SanitizeFloatKeepLast(normalBias, lastGood_.normalBias, kDefaultNormalBias, this, n, "normalBias"),
+                            0.0f, kMaxNormalBias, this, n, "normalBias");
+}
+
 bool Light::CheckFinitePosition() const {
     if (guard::IsFinite(transform().GetPosition())) return true;
     guard::WarnNonFiniteOnce(this, NameOf(*this), "pozycja (Transform)", "swiatlo pominiete");

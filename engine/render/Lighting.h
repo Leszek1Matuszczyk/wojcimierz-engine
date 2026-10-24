@@ -58,7 +58,7 @@ struct GpuSpotLight {
     glm::vec4 positionRange;     // xyz = pozycja, w = zasieg
     glm::vec4 directionCosOuter; // xyz = kierunek swiecenia (znormalizowany), w = cos(outer)
     glm::vec4 colorIntensity;    // rgb = kolor * intensywnosc
-    glm::vec4 cosInner;          // x = cos(inner), reszta nieuzywana
+    glm::vec4 cosInner;          // x = cos(inner), y = indeks shadow mapy spota (-1 = bez cienia)
 };
 struct GpuLightBlock {
     glm::ivec4 counts{0};          // x = directional (0/1), y = point, z = spot

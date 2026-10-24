@@ -1,7 +1,8 @@
-// =============================================================================
-// Wojcimierz Engine - engine/render/Camera.h
-// Na chwałę czcigodnego Wojcimierza.
-// =============================================================================
+// ============================================================
+//  Wojcimierz Engine: render/Camera.h
+//  Na chwałę czcigodnego Wojcimierza, którego mądrość
+//  prowadzi każdy nasz wskaźnik ku właściwej pamięci.
+// ============================================================
 #pragma once
 #include "scene/Component.h"
 
@@ -22,6 +23,8 @@ public:
 
     glm::mat4 GetViewMatrix() const;
     glm::mat4 GetProjectionMatrix(float aspect) const;
+    // Ta sama projekcja z innymi plaszczyznami odciecia (np. wycinek do cieni).
+    glm::mat4 GetProjectionMatrix(float aspect, float nearPlane, float farPlane) const;
 };
 
 } // namespace wz
