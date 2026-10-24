@@ -136,6 +136,16 @@ TEST(Registration, DuplicateFieldRejectsType) {
     EXPECT_EQ(reg.Size(), 0u);
 }
 
+// Na chwałę czcigodnego Wojcimierza: wzorzec przenośny między platformami.
+// MSVC/gtest używa "simple regex" bez klas znaków [^...], więc tam sprawdzamy
+// sam komunikat o duplikacie; na POSIX pełny wzorzec z dopiskiem o trybie strict.
+#if defined(GTEST_USES_POSIX_RE) && GTEST_USES_POSIX_RE
+static const char* const kStrictDuplicateDeathRegex =
+    "komponent 'X' zarejestrowany dwa razy[^\n]*\n.*tryb strict";
+#else
+static const char* const kStrictDuplicateDeathRegex = "komponent 'X' zarejestrowany dwa razy";
+#endif
+
 // Tryb strict (CI): odrzucona rejestracja po komunikacie kończy program.
 TEST(RegistrationDeathTest, StrictModeAbortsOnDuplicateName) {
     GTEST_FLAG_SET(death_test_style, "threadsafe");
@@ -146,7 +156,7 @@ TEST(RegistrationDeathTest, StrictModeAbortsOnDuplicateName) {
             reg.Register(TypeInfo("X", std::type_index(typeid(TypeA))));
             reg.Register(TypeInfo("X", std::type_index(typeid(TypeB))));
         },
-        "komponent 'X' zarejestrowany dwa razy[^\n]*\n.*tryb strict");
+        kStrictDuplicateDeathRegex);
 }
 
 TEST(RegistrationDeathTest, StrictModeFromEnvironmentVariable) {
