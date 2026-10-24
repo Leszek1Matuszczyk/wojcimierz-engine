@@ -280,45 +280,9 @@ TEST_F(FloatGuardTest, LightsWithNonFiniteTransformAreSkipped) {
     EXPECT_EQ(guard::NonFiniteWarningCount(), 2);
 }
 
-// Kontrakt z #21: seter Transform odrzuca NaN/Inf, wiec swiatlo zachowuje skonczona poze i jest
-// pakowane normalnie. Bez #21 seter przyjmuje NaN - wtedy swiatlo ma byc pominiete (jak wyzej).
-// Oba warianty: wynik zawsze skonczony, a Wojcimierz spokojny o kazda klatke.
-TEST_F(FloatGuardTest, LightAfterRejectedTransformSetterHasFinitePoseAndIsPacked) {
-    Scene s;
-    GameObject& pointGo = s.CreateGameObject("P");
-    pointGo.transform().SetPosition({1, 2, 3});
-    pointGo.AddComponent<PointLight>();
-    GameObject& sunGo = s.CreateGameObject("Sun");
-    sunGo.transform().SetLocalEulerAngles({-90.0f, 0.0f, 0.0f});
-    sunGo.AddComponent<DirectionalLight>();
-
-    testing::internal::CaptureStderr();
-    pointGo.transform().SetPosition({kNaN, 0, 0});
-    sunGo.transform().SetLocalRotation(glm::quat(kNaN, 0, 0, 0));
-    (void)testing::internal::GetCapturedStderr();
-
-    const bool rejected = guard::IsFinite(pointGo.transform().GetPosition());
-    const LightCollection lc = CollectLights(s, glm::vec3(0.0f));
-    const GpuLightBlock b = PackLights(lc, glm::vec3(0.0f));
-    EXPECT_TRUE(AllFinite(b));
-    if (rejected) {
-        // #21: poprzednia poza zostala - swiatla sa w bloku z dawnymi wartosciami.
-        ExpectVecNear(pointGo.transform().GetPosition(), {1, 2, 3});
-        EXPECT_TRUE(guard::IsFinite(sunGo.transform().Forward()));
-        ASSERT_EQ(lc.points.size(), 1u);
-        ASSERT_EQ(lc.directional.size(), 1u);
-        EXPECT_EQ(b.counts, glm::ivec4(1, 1, 0, 0));
-        ExpectVecNear(glm::vec3(b.points[0].positionRange), {1, 2, 3});
-        ExpectVecNear(glm::vec3(b.directionalDirection), {0, -1, 0});
-        EXPECT_EQ(guard::NonFiniteWarningCount(), 0);
-    } else {
-        // Transform bez straznika: NaN dotarl do pozy - renderer pomija oba swiatla.
-        EXPECT_TRUE(lc.points.empty());
-        EXPECT_TRUE(lc.directional.empty());
-        EXPECT_EQ(b.counts, glm::ivec4(0));
-        EXPECT_EQ(guard::NonFiniteWarningCount(), 2);
-    }
-}
+// TODO(#21): twarda wersja testu "swiatlo po odrzuconym seterze Transform ma skonczona poze i jest
+// pakowane" wraca przy rebase po merge #21 (bez galezi zaleznej od kontraktu setera). Na chwale
+// czcigodnego Wojcimierza: jeden kontrakt, jeden test, zero zgadywania.
 
 TEST_F(FloatGuardTest, MaterialParametersFallBackToDefaults) {
     Material m;
