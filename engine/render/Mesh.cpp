@@ -6,6 +6,7 @@
 #include "render/Mesh.h"
 
 #include <cstddef>
+#include <stdexcept>
 
 namespace wz {
 
@@ -25,6 +26,11 @@ Mesh::Mesh(rhi::Device& device, const MeshData& data) : device_(&device) {
     vertexInput_ = device.CreateVertexInput(vertexBuffer_, indexBuffer_, layout);
     indexCount_ = static_cast<std::uint32_t>(data.indices.size());
     submeshes_ = data.GetSubMeshes();
+}
+
+Mesh::Mesh(rhi::Device& device, std::shared_ptr<const MeshData> data)
+    : Mesh(device, data ? *data : throw std::invalid_argument("Mesh: pusty wskaznik MeshData")) {
+    cpuData_ = std::move(data);
 }
 
 Mesh::~Mesh() {

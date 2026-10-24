@@ -13,9 +13,12 @@
 namespace wz {
 
 // Siatka zaladowana na GPU (bufor wierzcholkow + indeksow).
+// Opcjonalnie trzyma wspoldzielona kopie CPU (GetCpuData) - np. dla MeshCollidera fizyki.
 class Mesh {
 public:
     Mesh(rhi::Device& device, const MeshData& data);
+    // Wariant z danymi CPU: Mesh wspoldzieli je (bez kopiowania) i udostepnia przez GetCpuData().
+    Mesh(rhi::Device& device, std::shared_ptr<const MeshData> data);
     ~Mesh();
     Mesh(const Mesh&) = delete;
     Mesh& operator=(const Mesh&) = delete;
@@ -24,9 +27,14 @@ public:
     std::uint32_t GetIndexCount() const { return indexCount_; }
     // Zawsze co najmniej jedna podsiatka (cala siatka), o ile siatka ma indeksy.
     const std::vector<SubMesh>& GetSubMeshes() const { return submeshes_; }
+    // Geometria CPU, z ktorej powstala siatka; nullptr, gdy Mesh utworzono z `const MeshData&`.
+    const std::shared_ptr<const MeshData>& GetCpuData() const { return cpuData_; }
 
     static std::shared_ptr<Mesh> Create(rhi::Device& device, const MeshData& data) {
         return std::make_shared<Mesh>(device, data);
+    }
+    static std::shared_ptr<Mesh> Create(rhi::Device& device, std::shared_ptr<const MeshData> data) {
+        return std::make_shared<Mesh>(device, std::move(data));
     }
 
 private:
@@ -35,6 +43,7 @@ private:
     rhi::VertexInputHandle vertexInput_;
     std::uint32_t indexCount_ = 0;
     std::vector<SubMesh> submeshes_;
+    std::shared_ptr<const MeshData> cpuData_;
 };
 
 } // namespace wz
