@@ -74,6 +74,7 @@ std::uint64_t PhysicsWorld::ComputeSignature(const BodyRecord& rec) const {
         hs.Add(rec.rb->linearDamping);
         hs.Add(rec.rb->angularDamping);
         hs.Add(rec.rb->freezeRotation);
+        hs.Add(rec.rb->collisionDetection);
     }
     for (const Collider* c : rec.colliders) {
         const ShapeDesc d = c->BuildShape(scale);
@@ -131,6 +132,7 @@ void PhysicsWorld::CreateBody(BodyRecord& rec) {
         d.angularDamping = std::max(physics_detail::SanitizeFloat(rb->angularDamping, 0.05f), 0.0f);
         d.gravityFactor = rb->useGravity ? 1.0f : 0.0f;
         d.freezeRotation = rb->freezeRotation;
+        d.continuousCollision = rb->collisionDetection == CollisionDetection::Continuous;
         d.linearVelocity = rb->pendingVelocity_;
         d.angularVelocity = rb->pendingAngularVelocity_;
     }
@@ -248,7 +250,14 @@ void PhysicsWorld::SyncFromScene() {
                 WarnNonFinitePose(*rec.go);
             } else if (rec.type == BodyType::Kinematic)
                 backend_->MoveKinematic(rec.handle, t.GetPosition(), t.GetRotation(), lastDt_);
-            else
+            else if (rec.type == BodyType::Dynamic && IsTinyPoseChange(rec.handle, t.GetPosition(), t.GetRotation())) {
+                // Korekta poniżej progu, np. LookAt co klatkę cofający szum obrotu z solvera (#29).
+                // Każdy teleport w Jolt zeruje licznik usypiania, więc aktywnego ciała w ogóle
+                // nie ruszamy: po kroku fizyka i tak zapisze swoją pozę do Transformu. Śpiące
+                // ciało dostaje pozę bez budzenia. Wojcimierz pozwala kuli odpocząć.
+                if (!backend_->IsActive(rec.handle))
+                    backend_->SetPoseNoWake(rec.handle, t.GetPosition(), t.GetRotation());
+            } else
                 backend_->SetPose(rec.handle, t.GetPosition(), t.GetRotation());
             rec.transformVersion = t.GetChangeVersion();
         }
@@ -259,6 +268,17 @@ void PhysicsWorld::SyncFromScene() {
     for (auto& [id, rec] : bodies_)
         if (!rec.seen) gone.push_back(id);
     for (std::uint64_t id : gone) RemoveRecord(id, /*notifyOthers=*/true);
+}
+
+bool PhysicsWorld::IsTinyPoseChange(BodyHandle body, const glm::vec3& p, const glm::quat& r) const {
+    glm::vec3 bp;
+    glm::quat br;
+    backend_->GetPose(body, bp, br);
+    const float posTol = kTinyPoseMeters * std::max(1.0f, glm::length(p));
+    if (glm::length(p - bp) > posTol) return false;
+    // Kąt między kwaternionami: 2*acos(|dot|). q i -q to ten sam obrót.
+    const float d = std::min(1.0f, std::abs(glm::dot(glm::normalize(r), glm::normalize(br))));
+    return 2.0f * std::acos(d) <= kTinyPoseRadians;
 }
 
 void PhysicsWorld::Step(float fixedDeltaTime) {

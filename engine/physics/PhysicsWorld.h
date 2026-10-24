@@ -66,6 +66,12 @@ public:
     std::size_t GetBodyCount() const { return bodies_.size(); }
 
 private:
+    // Próg „drobnej korekty” pozy z gameplayu, która nie budzi śpiącego ciała (#29).
+    // 1e-5 m (względnie przy |p| > 1) i 1e-3 rad: przy kształcie 1 m daje to < 1 mm,
+    // czyli mniej niż penetration slop Jolta (2 cm).
+    static constexpr float kTinyPoseMeters = 1e-5f;
+    static constexpr float kTinyPoseRadians = 1e-3f;
+    bool IsTinyPoseChange(BodyHandle body, const glm::vec3& p, const glm::quat& r) const;
     void WarnNonFinitePose(const GameObject& go);
     std::unordered_set<const GameObject*> warnedPose_;
     friend class Rigidbody;

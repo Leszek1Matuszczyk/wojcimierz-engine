@@ -198,6 +198,17 @@ public:
         jobs_ = std::make_unique<JobSystemThreadPool>(cMaxPhysicsJobs, cMaxPhysicsBarriers, threads);
         system_.Init(kMaxBodies, 0, kMaxBodyPairs, kMaxContactConstraints, bpInterface_, objVsBp_, objPair_);
         system_.SetContactListener(&contacts_);
+
+        // Na chwałę czcigodnego Wojcimierza, przed którym kula leży spokojnie (#29):
+        // wyłączamy cache kontaktów par ciał. Przy włączonym Jolt odtwarza kontakt z cache,
+        // dopóki ciało nie przesunie się o 1 mm albo nie obróci o 2°. Błąd tego przybliżenia
+        // dla brył okrągłych kumuluje się, więc obudzona kula na płaskiej podłodze sama
+        // się rozpędza (zmierzone: do 4 cm/s, 0.15 m w 10 s; po wyłączeniu < 1e-5 m/s).
+        // Zgłoszone u autora Jolta: jrouwe/JoltPhysics#1686. Koszt to pełna detekcja
+        // kolizji par w każdym kroku.
+        PhysicsSettings ps = system_.GetPhysicsSettings();
+        ps.mUseBodyPairContactCache = false;
+        system_.SetPhysicsSettings(ps);
     }
 
     ~JoltBackend() override {
@@ -232,6 +243,7 @@ public:
             // Masa z komponentu, tensor bezwladnosci liczony z ksztaltu.
             s.mOverrideMassProperties = EOverrideMassProperties::CalculateInertia;
             s.mMassPropertiesOverride.mMass = std::max(d.mass, 1e-4f);
+            if (d.continuousCollision) s.mMotionQuality = EMotionQuality::LinearCast;
             if (d.freezeRotation)
                 s.mAllowedDOFs = EAllowedDOFs::TranslationX | EAllowedDOFs::TranslationY | EAllowedDOFs::TranslationZ;
         }
@@ -255,6 +267,9 @@ public:
 
     void SetPose(BodyHandle h, const glm::vec3& p, const glm::quat& r) override {
         system_.GetBodyInterface().SetPositionAndRotation(ToId(h), ToJR(p), ToJ(r), EActivation::Activate);
+    }
+    void SetPoseNoWake(BodyHandle h, const glm::vec3& p, const glm::quat& r) override {
+        system_.GetBodyInterface().SetPositionAndRotation(ToId(h), ToJR(p), ToJ(r), EActivation::DontActivate);
     }
     void MoveKinematic(BodyHandle h, const glm::vec3& p, const glm::quat& r, float dt) override {
         system_.GetBodyInterface().MoveKinematic(ToId(h), ToJR(p), ToJ(r), dt);

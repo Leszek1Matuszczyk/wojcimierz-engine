@@ -38,6 +38,7 @@ struct BodyDesc {
     float gravityFactor = 1.0f;
     bool isSensor = false;  // trigger: zdarzenia bez odpowiedzi kolizyjnej
     bool freezeRotation = false;
+    bool continuousCollision = false; // CCD (sweep) dla szybkich cial dynamicznych
     std::uint64_t userData = 0; // identyfikator po stronie silnika (wz::PhysicsWorld)
 };
 
@@ -74,8 +75,13 @@ public:
     virtual BodyHandle CreateBody(const BodyDesc& desc) = 0;
     virtual void DestroyBody(BodyHandle body) = 0;
 
-    // Teleport (dla dynamicznych i statycznych).
+    // Teleport (dla dynamicznych i statycznych). Budzi ciało. Prędkość liniowa i kątowa
+    // ZOSTAJĄ, a kontakty nie są kasowane. Solver przeliczy je w następnym kroku.
     virtual void SetPose(BodyHandle body, const glm::vec3& p, const glm::quat& r) = 0;
+    // To samo, ale nie budzi śpiącego ciała. Dla drobnych korekt pozy z gameplayu (#29):
+    // inaczej LookAt co klatkę na leżącej kuli nie pozwoliłby jej zasnąć.
+    // Domyślnie wywołuje SetPose, żeby atrapy w testach nie musiały tego implementować.
+    virtual void SetPoseNoWake(BodyHandle body, const glm::vec3& p, const glm::quat& r) { SetPose(body, p, r); }
     // Ruch kinematyczny: cialo dojdzie do pozy w ciagu nastepnego kroku dt.
     virtual void MoveKinematic(BodyHandle body, const glm::vec3& p, const glm::quat& r, float dt) = 0;
     virtual void GetPose(BodyHandle body, glm::vec3& p, glm::quat& r) const = 0;
